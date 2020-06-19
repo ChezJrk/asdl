@@ -302,7 +302,7 @@ def memo(mod, whitelist, ext_key={}):
         Created by adt.ADT
     whitelist : list of strings
         Names of every constructor in `mod` that will be memoized.
-    ext_checks : dict of functions, optional
+    ext_key : dict of functions, optional
         Functions for converting external types into key-values for 
         memoization. "built-in" type key-functions are built-in.
 
