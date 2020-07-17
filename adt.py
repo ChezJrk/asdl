@@ -8,6 +8,7 @@
 import asdl
 from types import ModuleType
 from weakref import WeakValueDictionary
+import sys
 
 def _asdl_parse(str):
     parser = asdl.ASDLParser()
@@ -54,6 +55,8 @@ def _build_classes(asdl_mod, ext_checks={}):
     CHK  = _build_checks(asdl_mod, SC, ext_checks)
     
     mod  = ModuleType(asdl_mod.name)
+    # TODO: Investigate how to make generated modules fully native/safe/reliable
+    sys.modules[asdl_mod.name] = mod # register the new module
     
     Err  = type(asdl_mod.name+"Err",(Exception,),{})
     
