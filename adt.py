@@ -120,18 +120,50 @@ def _build_classes(asdl_mod, ext_checks={}):
         #print(exec_str)
         exec(exec_str, exec_out)
         return exec_out[C_name + '_repr']
-        
+    
+    def create_eqfn(C_name, fields):
+        compares = ' and '.join(
+            ['type(self) == type(o)'] +
+            [f"(self.{f.name} == o.{f.name})" for f in fields]
+        )
+        exec_out = { 'Err': Err }
+        exec_str = (f"def {C_name}_eq(self,o):"
+                    f"\n    return {compares}")
+        # un-comment this line to see what's
+        # really going on
+        #print(exec_str)
+        exec(exec_str, exec_out)
+        return exec_out[C_name + '_eq']
+    
+    def create_hashfn(C_name, fields):
+        hashes = ','.join(
+            [f"type(self)"] +
+            [f"self.{f.name}" for f in fields]
+        )
+        exec_out = { 'Err': Err }
+        exec_str = (f"def {C_name}_hash(self):"
+                    f"\n    return hash(({hashes}))")
+        # un-comment this line to see what's
+        # really going on
+        #print(exec_str)
+        exec(exec_str, exec_out)
+        return exec_out[C_name + '_hash']
+    
     def create_prod(nm,t):
         C          = SC[nm]
         fields     = t.fields
         C.__init__ = create_initfn(nm,fields)
         C.__repr__ = create_reprfn(nm,fields)
+        C.__eq__   = create_eqfn(nm,fields)
+        C.__hash__ = create_hashfn(nm,fields)
         return C
     
     def create_sum_constructor(tname,cname,T,fields):
         C          = type(cname,(T,),{
             '__init__' : create_initfn(cname,fields),
             '__repr__' : create_reprfn(cname,fields),
+            '__eq__'   : create_eqfn(cname,fields),
+            '__hash__' : create_hashfn(cname,fields),
         })
         return C
     
