@@ -173,14 +173,18 @@ def _build_classes(asdl_mod, ext_checks=None):
         C.__repr__ = create_reprfn(name, fields)
         C.__eq__ = create_eqfn(name, fields)
         C.__hash__ = create_hashfn(name, fields)
+        C.__slots__ = tuple(f.name for f in fields)
+        C.__match_args__ = tuple(f.name for f in fields)
         return C
 
-    def create_sum_constructor(tname, cname, T, fields):
+    def create_sum_constructor(cname, T, fields):
         C = type(cname, (T,), {
-            '__init__': create_initfn(cname, fields),
-            '__repr__': create_reprfn(cname, fields),
-            '__eq__'  : create_eqfn(cname, fields),
-            '__hash__': create_hashfn(cname, fields),
+            '__init__':       create_initfn(cname, fields),
+            '__repr__':       create_reprfn(cname, fields),
+            '__eq__':         create_eqfn(cname, fields),
+            '__hash__':       create_hashfn(cname, fields),
+            '__slots__':      tuple(f.name for f in fields),
+            '__match_args__': tuple(f.name for f in fields),
         })
         return C
 
@@ -188,9 +192,7 @@ def _build_classes(asdl_mod, ext_checks=None):
         T = SC[type_name]
         afields = sum_node.attributes
         for c in sum_node.types:
-            C = create_sum_constructor(
-                type_name, c.name, T,
-                c.fields + afields)
+            C = create_sum_constructor(c.name, T, c.fields + afields)
             assert (not hasattr(mod, c.name)), (
                 f"name '{c.name}' conflict in module '{mod}'")
             setattr(T, c.name, C)
