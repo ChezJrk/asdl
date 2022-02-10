@@ -202,7 +202,9 @@ def _build_classes(asdl_mod, ext_checks=None):
         elif isinstance(t, asdl.Sum):
             setattr(mod, nm, create_sum(nm, t))
         else:
-            assert False, "unexpected kind of asdl type"
+            assert (
+                False
+            ), "unexpected kind of asdl type"  # pragma nocover - very defensive
 
     return mod
 
@@ -262,8 +264,7 @@ def ADT(asdl_str, ext_checks=None):
             "id" : lambda x: type(x) is str and str.isalnum(),
         })
     """
-    if ext_checks is None:
-        ext_checks = {}
+    ext_checks = ext_checks or {}
 
     asdl_ast = _asdl_parse(asdl_str)
     mod = _build_classes(asdl_ast, ext_checks)
@@ -310,20 +311,20 @@ def _add_memoization(mod, whitelist, ext_key):
 
         argstr = ", ".join([f.name for f in fields])
         keystr = (
-                "("
-                + (
-                    "".join(
-                        [
-                            create_listkey(f)
-                            if f.seq
-                            else create_optkey(f)
-                            if f.opt
-                            else f"K['{f.type}']({f.name}),"
-                            for f in fields
-                        ]
-                    )
+            "("
+            + (
+                "".join(
+                    [
+                        create_listkey(f)
+                        if f.seq
+                        else create_optkey(f)
+                        if f.opt
+                        else f"K['{f.type}']({f.name}),"
+                        for f in fields
+                    ]
                 )
-                + ")"
+            )
+            + ")"
         )
 
         exec_out = {"T": T, "K": keymap}
