@@ -1,0 +1,11 @@
+# Project dependencies
+asdl==0.1.5
+
+# Development dependencies
+black==22.1.0
+build==0.7.0
+flake8==4.0.1
+pylint==2.12.2
+pytest-cov==3.0.0
+pytest==7.0.0
+tox==3.24.5
