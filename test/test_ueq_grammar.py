@@ -39,7 +39,7 @@ def ueq_grammar():
 def _public_names(obj):
     # If a class has __slots__, it does not have a __dict__.
     # Old Python versions do nothing special with __slots__.
-    fields = obj.__dict__ or getattr(obj, '__slots__', {})
+    fields = obj.__dict__ or getattr(obj, "__slots__", {})
     return set(filter(lambda x: not x.startswith("_"), fields))
 
 
@@ -172,6 +172,6 @@ def test_invalid_arg_type_throws(ueq_grammar):
         ueq_grammar.Var("not-a-sym")
 
     with pytest.raises(
-            TypeError, match=r'expected arg 0 "preds\[\]" to be type "UEq\.pred"'
+        TypeError, match=r'expected arg 0 "preds\[\]" to be type "UEq\.pred"'
     ):
         ueq_grammar.Conj([3])
