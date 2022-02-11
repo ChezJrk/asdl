@@ -56,10 +56,7 @@ def _build_checks(asdl_mod, scs, ext_checks):
     return checks
 
 
-def _build_classes(asdl_mod, ext_checks=None):
-    if ext_checks is None:
-        ext_checks = {}
-
+def _build_classes(asdl_mod, ext_checks):
     SC = _build_superclasses(asdl_mod)
     CHK = _build_checks(asdl_mod, SC, ext_checks)
 
@@ -356,7 +353,7 @@ def _add_memoization(mod, whitelist, ext_key):
             create_newfn(nm, t.fields)
         elif isinstance(t, asdl.Sum):
             expand_sum(nm, t)
-        else:
+        else:  # pragma: no cover
             assert False, "unexpected kind of asdl type"
 
 
