@@ -138,7 +138,7 @@ def _build_classes(asdl_mod, ext_checks):
 
     def create_eqfn(C_name, fields):
         compares = " and ".join(
-            ["type(self) == type(o)"]
+            ["type(self) is type(o)"]
             + [f"(self.{f.name} == o.{f.name})" for f in fields]
         )
         exec_out = {"Err": Err}
