@@ -9,14 +9,14 @@ def memo():
         """
         module memo {
             memo_prod = ( int x, int y )
-        
+
             memo_sum = A()
                      | B( int val )
-            
+
             normal_prod = ( int x, int y )
             normal_sum = C()
                        | D( int val )
-                       
+
             partial_sum = E( int val ) | F()
         }
         """,

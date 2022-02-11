@@ -20,12 +20,12 @@ def ueq_grammar():
                         sym*  knowns,  -- symbols allowed in solution expressions
                         pred* preds    -- conj of equations
                       )
-    
+
             pred = Conj( pred* preds )
                  | Disj( pred* preds )
                  | Cases( sym case_var, pred* cases )
                  | Eq( expr lhs, expr rhs )
-    
+
             expr = Const( int val )
                  | Var( sym name )
                  | Add( expr lhs, expr rhs )

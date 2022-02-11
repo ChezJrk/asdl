@@ -71,9 +71,10 @@ def _build_classes(asdl_mod, ext_checks):
         typname = typ
         if typ in SC:
             typname = asdl_mod.name + "." + typ
+        err_msg = f'expected arg {i} "{name}" to be type "{typname}"'
         return (
             f"{indent}if not CHK['{typ}']({argname}):\n"
-            f'{indent}    raise TypeError(\'expected arg {i} "{name}" to be type "{typname}"\')'
+            f"{indent}    raise TypeError('{err_msg}')"
         )
 
     def opt_check(i, name, argname, typ, indent="    "):
@@ -151,7 +152,7 @@ def _build_classes(asdl_mod, ext_checks):
         return exec_out[C_name + "_eq"]
 
     def create_hashfn(C_name, fields):
-        hashes = ",".join([f"type(self)"] + [f"self.{f.name}" for f in fields])
+        hashes = ",".join(["type(self)"] + [f"self.{f.name}" for f in fields])
         exec_out = {"Err": Err}
         exec_str = f"def {C_name}_hash(self):" f"\n    return hash(({hashes}))"
         # un-comment this line to see what's
