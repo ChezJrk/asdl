@@ -197,10 +197,8 @@ def _build_classes(asdl_mod, ext_checks):
             setattr(mod, nm, create_prod(nm, t))
         elif isinstance(t, asdl.Sum):
             setattr(mod, nm, create_sum(nm, t))
-        else:
-            assert (
-                False
-            ), "unexpected kind of asdl type"  # pragma nocover - very defensive
+        else:  # pragma nocover - very defensive
+            assert False, "unexpected kind of asdl type"
 
     return mod
 
@@ -345,7 +343,7 @@ def _add_memoization(mod, whitelist, ext_key):
             create_newfn(nm, t.fields)
         elif isinstance(t, asdl.Sum):
             expand_sum(t)
-        else:  # pragma: no cover
+        else:  # pragma: nocover - very defensive
             assert False, "unexpected kind of asdl type"
 
 
