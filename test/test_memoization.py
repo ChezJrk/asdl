@@ -1,11 +1,11 @@
 import pytest
 
-import adt
+import asdl_adt
 
 
 @pytest.fixture(scope="session")
 def memo():
-    memo_grammar = adt.ADT(
+    memo_grammar = asdl_adt.ADT(
         """
         module memo {
             memo_prod = ( int x, int y )
@@ -21,7 +21,7 @@ def memo():
         }
         """,
     )
-    adt.memo(memo_grammar, ["memo_prod", "A", "B", "E"])
+    asdl_adt.memo(memo_grammar, ["memo_prod", "A", "B", "E"])
     return memo_grammar
 
 

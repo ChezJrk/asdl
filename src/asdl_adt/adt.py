@@ -356,7 +356,7 @@ def memo(mod, whitelist, ext_key=None):
     Parameters
     =================
     mod : ADT module
-        Created by adt.ADT
+        Created by asdl_adt.ADT
     whitelist : list of strings
         Names of every constructor in `mod` that will be memoized.
     ext_key : dict of functions, optional

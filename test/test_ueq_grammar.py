@@ -3,10 +3,10 @@ from dataclasses import dataclass
 
 import pytest
 
-from adt import ADT
+from asdl_adt import ADT
 
 
-@dataclass(slots=True, frozen=True)
+@dataclass(frozen=True)
 class Sym:
     name: str
 
@@ -169,6 +169,6 @@ def test_invalid_arg_type_throws(ueq_grammar):
         ueq_grammar.Var("not-a-sym")
 
     with pytest.raises(
-        TypeError, match=r'expected arg 0 "preds\[\]" to be type "UEq\.pred"'
+            TypeError, match=r'expected arg 0 "preds\[\]" to be type "UEq\.pred"'
     ):
         ueq_grammar.Conj([3])
