@@ -52,4 +52,4 @@ jobs:
 
       - uses: psf/black@stable
       - uses: py-actions/flake8@v2
-      - uses: cclauss/GitHub-Action-for-pylint@0.7.0
+      - run: pylint **/*.py

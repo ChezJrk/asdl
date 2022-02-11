@@ -11,8 +11,8 @@ class Sym:
     name: str
 
 
-@pytest.fixture(scope="session")
-def ueq_grammar():
+@pytest.fixture(scope="session", name="ueq_grammar")
+def fixture_ueq_grammar():
     return ADT(
         """
         module UEq {

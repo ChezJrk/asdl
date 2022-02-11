@@ -19,15 +19,15 @@ def _asdl_parse(asdl_str):
 def _build_superclasses(asdl_mod):
     scs = {}
 
-    def create_invalid_init(name):
+    def create_invalid_init():
         def invalid_init(self):
-            assert False, f"{name} should never be instantiated"
+            assert False, f"{type(self).__name__} should never be instantiated"
 
         return invalid_init
 
     for nm, v in asdl_mod.types.items():
         if isinstance(v, asdl.Sum):
-            scs[nm] = type(nm, (), {"__init__": create_invalid_init(nm)})
+            scs[nm] = type(nm, (), {"__init__": create_invalid_init()})
         elif isinstance(v, asdl.Product):
             scs[nm] = type(nm, (), {})
     return scs

@@ -3,8 +3,8 @@ import pytest
 import asdl_adt
 
 
-@pytest.fixture(scope="session")
-def memo():
+@pytest.fixture(scope="session", name="memo")
+def fixture_memo():
     memo_grammar = asdl_adt.ADT(
         """
         module memo {
