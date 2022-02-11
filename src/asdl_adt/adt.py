@@ -316,21 +316,19 @@ def _add_memoization(mod, whitelist, ext_key):
         ty = getattr(mod, name)
 
         args = ", ".join([f.name for f in fields])
-        key = "({})".format(
-            "".join(
-                [
-                    create_listkey(f)
-                    if f.seq
-                    else (create_optkey(f) if f.opt else f"K['{f.type}']({f.name}),")
-                    for f in fields
-                ]
-            )
+        key = "".join(
+            [
+                create_listkey(f)
+                if f.seq
+                else (create_optkey(f) if f.opt else f"K['{f.type}']({f.name}),")
+                for f in fields
+            ]
         )
 
         exec_out = {"T": ty, "K": keymap}
         exec_str = (
             f"def {name}_new(cls, {args}):\n"
-            f"    key = {key}\n"
+            f"    key = ({key})\n"
             f"    val = T._memo_cache.get(key)\n"
             f"    if val == None:\n"
             f"        val = super(T,cls).__new__(cls)\n"

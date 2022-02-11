@@ -53,3 +53,5 @@ jobs:
       - uses: psf/black@stable
       - uses: py-actions/flake8@v2
       - run: pylint **/*.py
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src
