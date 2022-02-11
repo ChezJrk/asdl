@@ -4,16 +4,10 @@ This is the main parsing and class metaprogramming module in ASDL-ADT.
 
 import sys
 import textwrap
+from functools import cache
 from types import ModuleType
-from weakref import WeakValueDictionary
 
 import asdl
-
-
-def _asdl_parse(asdl_str):
-    parser = asdl.ASDLParser()
-    module = parser.parse(asdl_str)
-    return module
 
 
 def _build_superclasses(asdl_mod):
@@ -265,7 +259,7 @@ def ADT(asdl_str, ext_checks=None):
     """
     ext_checks = ext_checks or {}
 
-    asdl_ast = _asdl_parse(asdl_str)
+    asdl_ast = asdl.ASDLParser().parse(asdl_str)
     mod = _build_classes(asdl_ast, ext_checks)
     # cache values in case we might want them
     mod._ext_checks = ext_checks
@@ -284,78 +278,7 @@ def ADT(asdl_str, ext_checks=None):
     return mod
 
 
-_builtin_keymap = {
-    "string": lambda x: x,
-    "int": lambda x: x,
-    "object": lambda x: x,
-    "float": lambda x: x,
-    "bool": lambda x: x,
-}
-
-
-def _add_memoization(mod, whitelist, ext_key):
-    asdl_mod = mod._ast
-
-    keymap = _builtin_keymap.copy()
-    for name, function in ext_key.items():
-        keymap[name] = function
-    for name in asdl_mod.types:
-        keymap[name] = id
-
-    def create_listkey(func):
-        i = "i" if func.name != "i" else "ii"
-        return f"tuple( K['{func.type}']({i}) for {i} in {func.name} ),"
-
-    def create_optkey(func):
-        return f"None if {func.name} is None else K['{func.type}']({func.name}),"
-
-    def create_newfn(name, fields):
-        if name not in whitelist:
-            return
-        cls = getattr(mod, name)
-
-        args = ", ".join([f.name for f in fields])
-        key = "".join(
-            [
-                create_listkey(f)
-                if f.seq
-                else (create_optkey(f) if f.opt else f"K['{f.type}']({f.name}),")
-                for f in fields
-            ]
-        )
-
-        exec_out = {"T": cls, "K": keymap}
-        exec_str = (
-            f"def {name}_new(cls, {args}):\n"
-            f"    key = ({key})\n"
-            f"    val = T._memo_cache.get(key)\n"
-            f"    if val == None:\n"
-            f"        val = super(T,cls).__new__(cls)\n"
-            f"        T._memo_cache[key] = val\n"
-            f"    return val"
-        )
-        # un-comment this line to see what's
-        # really going on
-        # print(exec_str)
-        exec(exec_str, exec_out)
-
-        cls._memo_cache = WeakValueDictionary({})
-        cls.__new__ = exec_out[name + "_new"]
-
-    def expand_sum(sum_node):
-        for constructor in sum_node.types:
-            create_newfn(constructor.name, constructor.fields + sum_node.attributes)
-
-    for name, definition in asdl_mod.types.items():
-        if isinstance(definition, asdl.Product):
-            create_newfn(name, definition.fields)
-        elif isinstance(definition, asdl.Sum):
-            expand_sum(definition)
-        else:  # pragma: nocover - very defensive
-            assert False, "unexpected kind of asdl type"
-
-
-def memo(mod, whitelist, ext_key=None):
+def memo(module, whitelist):
     """Function that wraps ADT class constructors with memoization.
 
     This function should be called right after construction of an ADT
@@ -363,17 +286,32 @@ def memo(mod, whitelist, ext_key=None):
 
     Parameters
     =================
-    mod : ADT module
+    module : ADT module
         Created by asdl_adt.ADT
     whitelist : list of strings
         Names of every constructor in `mod` that will be memoized.
-    ext_key : dict of functions, optional
-        Functions for converting external types into key-values for
-        memoization. "built-in" type key-functions are built-in.
 
     Returns
     =================
     Nothing
     """
-    ext_key = ext_key or {}
-    _add_memoization(mod, whitelist, ext_key)
+
+    def cache_dunder_new(cls_name):
+        cls = getattr(module, cls_name)
+
+        @cache
+        def new_fn(inner_cls, *_, **__):
+            return super(cls, inner_cls).__new__(inner_cls)
+
+        cls.__new__ = new_fn
+
+    for name, definition in module._ast.types.items():
+        if name not in whitelist:
+            continue
+        if isinstance(definition, asdl.Product):
+            cache_dunder_new(name)
+        elif isinstance(definition, asdl.Sum):
+            for constructor in definition.types:
+                cache_dunder_new(constructor.name)
+        else:  # pragma: nocover - very defensive
+            assert False, "unexpected kind of asdl type"
