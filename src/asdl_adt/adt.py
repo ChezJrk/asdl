@@ -1,5 +1,5 @@
 """
-A module for parsing ASDL grammars into Python Class hierarchies
+This is the main parsing and class metaprogramming module in ASDL-ADT.
 """
 
 import sys
