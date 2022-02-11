@@ -166,6 +166,8 @@ def _build_classes(asdl_mod, ext_checks):
         C.__repr__ = create_reprfn(name, fields)
         C.__eq__ = create_eqfn(name, fields)
         C.__hash__ = create_hashfn(name, fields)
+        C.__slots__ = tuple(f.name for f in fields)
+        C.__match_args__ = tuple(f.name for f in fields)
         return C
 
     def create_sum_constructor(cname, ty, fields):
@@ -177,6 +179,8 @@ def _build_classes(asdl_mod, ext_checks):
                 "__repr__": create_reprfn(cname, fields),
                 "__eq__": create_eqfn(cname, fields),
                 "__hash__": create_hashfn(cname, fields),
+                '__slots__': tuple(f.name for f in fields),
+                '__match_args__': tuple(f.name for f in fields),
             },
         )
 
