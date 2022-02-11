@@ -42,34 +42,33 @@ _builtin_checks = {
 }
 
 
-def _build_checks(scs, ext_checks):
+def _build_checks(superclasses, ext_checks):
     checks = _builtin_checks.copy()
 
     def make_check(superclass):
         return lambda x: isinstance(x, superclass)
 
-    for nm in ext_checks:
-        checks[nm] = ext_checks[nm]
-    for nm in scs:
-        assert nm not in checks, f"Name conflict for type '{nm}'"
-        sc = scs[nm]
-        checks[nm] = make_check(sc)
+    for name in ext_checks:
+        checks[name] = ext_checks[name]
+    for name in superclasses:
+        assert name not in checks, f"Name conflict for type '{name}'"
+        checks[name] = make_check(superclasses[name])
     return checks
 
 
 def _build_classes(asdl_mod, ext_checks):
-    SC = _build_superclasses(asdl_mod)
-    CHK = _build_checks(SC, ext_checks)
+    superclasses = _build_superclasses(asdl_mod)
+    check_funcs = _build_checks(superclasses, ext_checks)
 
     mod = ModuleType(asdl_mod.name)
     # TODO: Investigate how to make generated modules fully native/safe/reliable
     sys.modules[asdl_mod.name] = mod  # register the new module
 
-    Err = type(asdl_mod.name + "Err", (Exception,), {})
+    err_cls = type(asdl_mod.name + "Err", (Exception,), {})
 
     def basic_check(i, name, argname, typ, indent="    "):
         typname = typ
-        if typ in SC:
+        if typ in superclasses:
             typname = asdl_mod.name + "." + typ
         err_msg = f'expected arg {i} "{name}" to be type "{typname}"'
         return (
@@ -92,7 +91,7 @@ def _build_classes(asdl_mod, ext_checks):
             f"{basic_check(i, name + '[]', argname + '[j]', typ, indent + '    ')}"
         )
 
-    def create_initfn(C_name, fields):
+    def create_initfn(cls_name, fields):
         nameargs = ", ".join([f.name for i, f in enumerate(fields)])
         argstr = ", ".join([f"arg_{i}" for i, f in enumerate(fields)])
         checks = "\n".join(
@@ -114,95 +113,95 @@ def _build_classes(asdl_mod, ext_checks):
             checks = "    pass"
             assign = "pass"
 
-        exec_out = {"Err": Err, "CHK": CHK}
+        exec_out = {"Err": err_cls, "CHK": check_funcs}
         exec_str = (
-            f"def {C_name}_init_inner(self,{argstr}):\n"
+            f"def {cls_name}_init_inner(self,{argstr}):\n"
             f"{checks}\n"
             f"    {assign}\n"
-            f"def {C_name}_init(self,{nameargs}):\n"
-            f"    {C_name}_init_inner(self,{nameargs})"
+            f"def {cls_name}_init(self,{nameargs}):\n"
+            f"    {cls_name}_init_inner(self,{nameargs})"
         )
         # un-comment this line to see what's
         # really going on
         # print(exec_str)
         exec(exec_str, exec_out)
-        return exec_out[C_name + "_init"]
+        return exec_out[cls_name + "_init"]
 
-    def create_reprfn(C_name, fields):
+    def create_reprfn(cls_name, fields):
         prints = ",".join([f"{f.name}={{repr(self.{f.name})}}" for f in fields])
-        exec_out = {"Err": Err}
-        exec_str = f"def {C_name}_repr(self):" f'\n    return f"{C_name}({prints})"'
+        exec_out = {"Err": err_cls}
+        exec_str = f"def {cls_name}_repr(self):" f'\n    return f"{cls_name}({prints})"'
         # un-comment this line to see what's
         # really going on
         # print(exec_str)
         exec(exec_str, exec_out)
-        return exec_out[C_name + "_repr"]
+        return exec_out[cls_name + "_repr"]
 
-    def create_eqfn(C_name, fields):
+    def create_eqfn(cls_name, fields):
         compares = " and ".join(
             ["type(self) is type(o)"]
             + [f"(self.{f.name} == o.{f.name})" for f in fields]
         )
-        exec_out = {"Err": Err}
-        exec_str = f"def {C_name}_eq(self,o):" f"\n    return {compares}"
+        exec_out = {"Err": err_cls}
+        exec_str = f"def {cls_name}_eq(self,o):" f"\n    return {compares}"
         # un-comment this line to see what's
         # really going on
         # print(exec_str)
         exec(exec_str, exec_out)
-        return exec_out[C_name + "_eq"]
+        return exec_out[cls_name + "_eq"]
 
-    def create_hashfn(C_name, fields):
+    def create_hashfn(cls_name, fields):
         hashes = ",".join(["type(self)"] + [f"self.{f.name}" for f in fields])
-        exec_out = {"Err": Err}
-        exec_str = f"def {C_name}_hash(self):" f"\n    return hash(({hashes}))"
+        exec_out = {"Err": err_cls}
+        exec_str = f"def {cls_name}_hash(self):" f"\n    return hash(({hashes}))"
         # un-comment this line to see what's
         # really going on
         # print(exec_str)
         exec(exec_str, exec_out)
-        return exec_out[C_name + "_hash"]
+        return exec_out[cls_name + "_hash"]
 
-    def create_prod(name, prod_node):
-        C = SC[name]
+    def create_prod(cls_name, prod_node):
+        cls = superclasses[cls_name]
         fields = prod_node.fields
-        C.__init__ = create_initfn(name, fields)
-        C.__repr__ = create_reprfn(name, fields)
-        C.__eq__ = create_eqfn(name, fields)
-        C.__hash__ = create_hashfn(name, fields)
-        C.__slots__ = tuple(f.name for f in fields)
-        C.__match_args__ = tuple(f.name for f in fields)
-        return C
+        cls.__init__ = create_initfn(cls_name, fields)
+        cls.__repr__ = create_reprfn(cls_name, fields)
+        cls.__eq__ = create_eqfn(cls_name, fields)
+        cls.__hash__ = create_hashfn(cls_name, fields)
+        cls.__slots__ = tuple(f.name for f in fields)
+        cls.__match_args__ = tuple(f.name for f in fields)
+        return cls
 
-    def create_sum_constructor(cname, ty, fields):
+    def create_sum_constructor(cls_name, supercls, fields):
         return type(
-            cname,
-            (ty,),
+            cls_name,
+            (supercls,),
             {
-                "__init__": create_initfn(cname, fields),
-                "__repr__": create_reprfn(cname, fields),
-                "__eq__": create_eqfn(cname, fields),
-                "__hash__": create_hashfn(cname, fields),
+                "__init__": create_initfn(cls_name, fields),
+                "__repr__": create_reprfn(cls_name, fields),
+                "__eq__": create_eqfn(cls_name, fields),
+                "__hash__": create_hashfn(cls_name, fields),
                 "__slots__": tuple(f.name for f in fields),
                 "__match_args__": tuple(f.name for f in fields),
             },
         )
 
     def create_sum(type_name, sum_node):
-        T = SC[type_name]
-        afields = sum_node.attributes
-        for c in sum_node.types:
-            C = create_sum_constructor(c.name, T, c.fields + afields)
+        cls = superclasses[type_name]
+        attrs = sum_node.attributes
+        for sum_case in sum_node.types:
+            ctor = create_sum_constructor(sum_case.name, cls, sum_case.fields + attrs)
             assert not hasattr(
-                mod, c.name
-            ), f"name '{c.name}' conflict in module '{mod}'"
-            setattr(T, c.name, C)
-            setattr(mod, c.name, C)
-        return T
+                mod, sum_case.name
+            ), f"name '{sum_case.name}' conflict in module '{mod}'"
+            setattr(cls, sum_case.name, ctor)
+            setattr(mod, sum_case.name, ctor)
+        return cls
 
-    for nm, t in asdl_mod.types.items():
-        if isinstance(t, asdl.Product):
-            setattr(mod, nm, create_prod(nm, t))
-        elif isinstance(t, asdl.Sum):
-            setattr(mod, nm, create_sum(nm, t))
+    for name, definition in asdl_mod.types.items():
+        if isinstance(definition, asdl.Product):
+            setattr(mod, name, create_prod(name, definition))
+        elif isinstance(definition, asdl.Sum):
+            setattr(mod, name, create_sum(name, definition))
         else:  # pragma nocover - very defensive
             assert False, "unexpected kind of asdl type"
 
@@ -298,22 +297,22 @@ def _add_memoization(mod, whitelist, ext_key):
     asdl_mod = mod._ast
 
     keymap = _builtin_keymap.copy()
-    for nm, fn in ext_key.items():
-        keymap[nm] = fn
-    for nm in asdl_mod.types:
-        keymap[nm] = id
+    for name, function in ext_key.items():
+        keymap[name] = function
+    for name in asdl_mod.types:
+        keymap[name] = id
 
-    def create_listkey(f):
-        i = "i" if f.name != "i" else "ii"
-        return f"tuple( K['{f.type}']({i}) for {i} in {f.name} ),"
+    def create_listkey(func):
+        i = "i" if func.name != "i" else "ii"
+        return f"tuple( K['{func.type}']({i}) for {i} in {func.name} ),"
 
-    def create_optkey(f):
-        return f"None if {f.name} is None else K['{f.type}']({f.name}),"
+    def create_optkey(func):
+        return f"None if {func.name} is None else K['{func.type}']({func.name}),"
 
     def create_newfn(name, fields):
         if name not in whitelist:
             return
-        ty = getattr(mod, name)
+        cls = getattr(mod, name)
 
         args = ", ".join([f.name for f in fields])
         key = "".join(
@@ -325,7 +324,7 @@ def _add_memoization(mod, whitelist, ext_key):
             ]
         )
 
-        exec_out = {"T": ty, "K": keymap}
+        exec_out = {"T": cls, "K": keymap}
         exec_str = (
             f"def {name}_new(cls, {args}):\n"
             f"    key = ({key})\n"
@@ -340,19 +339,18 @@ def _add_memoization(mod, whitelist, ext_key):
         # print(exec_str)
         exec(exec_str, exec_out)
 
-        ty._memo_cache = WeakValueDictionary({})
-        ty.__new__ = exec_out[name + "_new"]
+        cls._memo_cache = WeakValueDictionary({})
+        cls.__new__ = exec_out[name + "_new"]
 
     def expand_sum(sum_node):
-        attrs = sum_node.attributes
-        for c in sum_node.types:
-            create_newfn(c.name, c.fields + attrs)
+        for constructor in sum_node.types:
+            create_newfn(constructor.name, constructor.fields + sum_node.attributes)
 
-    for nm, t in asdl_mod.types.items():
-        if isinstance(t, asdl.Product):
-            create_newfn(nm, t.fields)
-        elif isinstance(t, asdl.Sum):
-            expand_sum(t)
+    for name, definition in asdl_mod.types.items():
+        if isinstance(definition, asdl.Product):
+            create_newfn(name, definition.fields)
+        elif isinstance(definition, asdl.Sum):
+            expand_sum(definition)
         else:  # pragma: nocover - very defensive
             assert False, "unexpected kind of asdl type"
 
