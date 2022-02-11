@@ -17,7 +17,7 @@ def _asdl_parse(asdl_str):
 
 
 def _build_superclasses(asdl_mod):
-    scs = {}
+    classes = {}
 
     def create_invalid_init():
         def invalid_init(self):
@@ -25,12 +25,12 @@ def _build_superclasses(asdl_mod):
 
         return invalid_init
 
-    for nm, v in asdl_mod.types.items():
-        if isinstance(v, asdl.Sum):
-            scs[nm] = type(nm, (), {"__init__": create_invalid_init()})
-        elif isinstance(v, asdl.Product):
-            scs[nm] = type(nm, (), {})
-    return scs
+    for name, definition in asdl_mod.types.items():
+        if isinstance(definition, asdl.Sum):
+            classes[name] = type(name, (), {"__init__": create_invalid_init()})
+        elif isinstance(definition, asdl.Product):
+            classes[name] = type(name, (), {})
+    return classes
 
 
 _builtin_checks = {

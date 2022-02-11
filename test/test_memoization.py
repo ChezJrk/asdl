@@ -1,3 +1,9 @@
+"""
+Tests of ASDL-ADT's memoization functionality. Memoized constructors always return an
+identical node, given equal arguments (which therefore will not necessarily compare
+identical via "is" to the resulting object's fields, themselves)
+"""
+
 import pytest
 
 import asdl_adt
@@ -5,6 +11,10 @@ import asdl_adt
 
 @pytest.fixture(scope="session", name="memo")
 def fixture_memo():
+    """
+    A test grammar with fully memoized types, partially memoized types, and
+    non-memoized types.
+    """
     memo_grammar = asdl_adt.ADT(
         """
         module memo {
@@ -26,6 +36,11 @@ def fixture_memo():
 
 
 def test_memoization(memo):
+    """
+    Test that memoized objects are identical (via is) and that non-memoized objects are
+    equal (via ==).
+    """
+
     assert memo.memo_prod(3, 4) is memo.memo_prod(3, 4)
     assert memo.memo_prod(3, 4) is not memo.memo_prod(3, 5)
 

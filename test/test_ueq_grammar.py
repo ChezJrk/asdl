@@ -1,3 +1,7 @@
+"""
+Test data structure invariants in a real-world grammar.
+"""
+
 import inspect
 from dataclasses import dataclass
 
@@ -8,11 +12,19 @@ from asdl_adt import ADT
 
 @dataclass(frozen=True)
 class Sym:
+    """
+    A simple wrapper around a string for testing custom type validation.
+    """
+
     name: str
 
 
 @pytest.fixture(scope="session", name="ueq_grammar")
 def fixture_ueq_grammar():
+    """
+    A grammar representing a unification equation from the SYSTL project.
+    """
+
     return ADT(
         """
         module UEq {
@@ -44,6 +56,10 @@ def _public_names(obj):
 
 
 def test_module_names(ueq_grammar):
+    """
+    Test that the generated module has the exact set of expected exports.
+    """
+
     assert _public_names(ueq_grammar) == {
         "problem",
         "pred",
@@ -60,6 +76,10 @@ def test_module_names(ueq_grammar):
 
 
 def test_module_subtyping(ueq_grammar):
+    """
+    Test that generated classes have the expected subtyping relationships.
+    """
+
     assert isinstance(ueq_grammar.problem, type)
     assert isinstance(ueq_grammar.pred, type)
     assert isinstance(ueq_grammar.expr, type)
@@ -72,6 +92,10 @@ def test_module_subtyping(ueq_grammar):
 
 
 def test_module_function_signatures(ueq_grammar):
+    """
+    Test that generated constructors have the expected arguments in the expected order
+    """
+
     def check_args(cls, expected_args):
         real_args = inspect.getfullargspec(cls.__init__)
         assert real_args.args == expected_args
@@ -98,6 +122,10 @@ def test_module_function_signatures(ueq_grammar):
 
 
 def test_module_abstract_classes(ueq_grammar):
+    """
+    That that superclasses are abstract (i.e. cannot be directly instantiated)
+    """
+
     # TODO: with pytest.raises(TypeError, match='Can\'t instantiate abstract class'):
     with pytest.raises(AssertionError, match=r"pred should never be instantiated"):
         ueq_grammar.pred()
@@ -107,6 +135,10 @@ def test_module_abstract_classes(ueq_grammar):
 
 
 def test_create_problem(ueq_grammar):
+    """
+    Test that constructed problem instances have the expected structure
+    """
+
     problem = ueq_grammar.problem(
         [Sym("x")],
         [Sym("y")],
@@ -122,30 +154,38 @@ def test_create_problem(ueq_grammar):
 
 
 def test_create_pred(ueq_grammar):
-    eq = ueq_grammar.Eq(ueq_grammar.Var(Sym("x")), ueq_grammar.Const(3))
-    assert isinstance(eq, ueq_grammar.Eq)
-    assert eq.lhs == ueq_grammar.Var(Sym("x"))
-    assert eq.rhs == ueq_grammar.Const(3)
-    assert _public_names(eq) == {"lhs", "rhs"}
+    """
+    Test that constructed predicates have the expected structure
+    """
 
-    cases = ueq_grammar.Cases(Sym("y"), [eq])
+    eq_node = ueq_grammar.Eq(ueq_grammar.Var(Sym("x")), ueq_grammar.Const(3))
+    assert isinstance(eq_node, ueq_grammar.Eq)
+    assert eq_node.lhs == ueq_grammar.Var(Sym("x"))
+    assert eq_node.rhs == ueq_grammar.Const(3)
+    assert _public_names(eq_node) == {"lhs", "rhs"}
+
+    cases = ueq_grammar.Cases(Sym("y"), [eq_node])
     assert isinstance(cases, ueq_grammar.Cases)
     assert cases.case_var == Sym("y")
-    assert cases.cases == [eq]
+    assert cases.cases == [eq_node]
     assert _public_names(cases) == {"case_var", "cases"}
 
-    disj = ueq_grammar.Disj([eq])
+    disj = ueq_grammar.Disj([eq_node])
     assert isinstance(disj, ueq_grammar.Disj)
-    assert disj.preds == [eq]
+    assert disj.preds == [eq_node]
     assert _public_names(disj) == {"preds"}
 
-    conj = ueq_grammar.Conj([eq])
+    conj = ueq_grammar.Conj([eq_node])
     assert isinstance(conj, ueq_grammar.Conj)
-    assert conj.preds == [eq]
+    assert conj.preds == [eq_node]
     assert _public_names(conj) == {"preds"}
 
 
 def test_create_expr(ueq_grammar):
+    """
+    Test that constructed expressions have the expected structure
+    """
+
     const = ueq_grammar.Const(3)
     assert isinstance(const, ueq_grammar.Const)
     assert const.val == 3
@@ -168,6 +208,10 @@ def test_create_expr(ueq_grammar):
 
 
 def test_invalid_arg_type_throws(ueq_grammar):
+    """
+    Test that generated data type constructors validate the types of their arguments.
+    """
+
     with pytest.raises(TypeError, match=r'expected arg 0 "name" to be type "sym"'):
         ueq_grammar.Var("not-a-sym")
 
