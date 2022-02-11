@@ -1,15 +1,7 @@
 name: CI
 on:
   push:
-    paths:
-      - '**.py'
-      - '**.cfg'
-      - 'requirements.txt'
   pull_request:
-    paths:
-      - '**.py'
-      - '**.cfg'
-      - 'requirements.txt'
 jobs:
   test:
     strategy:
