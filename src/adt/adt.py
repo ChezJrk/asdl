@@ -41,7 +41,7 @@ _builtin_checks = {
 }
 
 
-def _build_checks(asdl_mod, scs, ext_checks):
+def _build_checks(scs, ext_checks):
     checks = _builtin_checks.copy()
 
     def make_check(superclass):
@@ -58,7 +58,7 @@ def _build_checks(asdl_mod, scs, ext_checks):
 
 def _build_classes(asdl_mod, ext_checks):
     SC = _build_superclasses(asdl_mod)
-    CHK = _build_checks(asdl_mod, SC, ext_checks)
+    CHK = _build_checks(SC, ext_checks)
 
     mod = ModuleType(asdl_mod.name)
     # TODO: Investigate how to make generated modules fully native/safe/reliable
@@ -168,10 +168,10 @@ def _build_classes(asdl_mod, ext_checks):
         C.__hash__ = create_hashfn(name, fields)
         return C
 
-    def create_sum_constructor(tname, cname, T, fields):
-        C = type(
+    def create_sum_constructor(cname, ty, fields):
+        return type(
             cname,
-            (T,),
+            (ty,),
             {
                 "__init__": create_initfn(cname, fields),
                 "__repr__": create_reprfn(cname, fields),
@@ -179,13 +179,12 @@ def _build_classes(asdl_mod, ext_checks):
                 "__hash__": create_hashfn(cname, fields),
             },
         )
-        return C
 
     def create_sum(type_name, sum_node):
         T = SC[type_name]
         afields = sum_node.attributes
         for c in sum_node.types:
-            C = create_sum_constructor(type_name, c.name, T, c.fields + afields)
+            C = create_sum_constructor(c.name, T, c.fields + afields)
             assert not hasattr(
                 mod, c.name
             ), f"name '{c.name}' conflict in module '{mod}'"
@@ -296,38 +295,32 @@ def _add_memoization(mod, whitelist, ext_key):
 
     def create_listkey(f):
         i = "i" if f.name != "i" else "ii"
-        return f"tuple( K['{f.type}']({i}) " f"for {i} in {f.name} ),"
+        return f"tuple( K['{f.type}']({i}) for {i} in {f.name} ),"
 
     def create_optkey(f):
-        return f"None if {f.name} == None else " f"K['{f.type}']({f.name}),"
+        return f"None if {f.name} is None else K['{f.type}']({f.name}),"
 
     def create_newfn(name, fields):
         if name not in whitelist:
             return
-        T = getattr(mod, name)
+        ty = getattr(mod, name)
 
-        argstr = ", ".join([f.name for f in fields])
-        keystr = (
-            "("
-            + (
-                "".join(
-                    [
-                        create_listkey(f)
-                        if f.seq
-                        else create_optkey(f)
-                        if f.opt
-                        else f"K['{f.type}']({f.name}),"
-                        for f in fields
-                    ]
-                )
+        args = ", ".join([f.name for f in fields])
+        key = "({})".format(
+            "".join(
+                [
+                    create_listkey(f)
+                    if f.seq
+                    else (create_optkey(f) if f.opt else f"K['{f.type}']({f.name}),")
+                    for f in fields
+                ]
             )
-            + ")"
         )
 
-        exec_out = {"T": T, "K": keymap}
+        exec_out = {"T": ty, "K": keymap}
         exec_str = (
-            f"def {name}_new(cls,{argstr}):\n"
-            f"    key = {keystr}\n"
+            f"def {name}_new(cls, {args}):\n"
+            f"    key = {key}\n"
             f"    val = T._memo_cache.get(key)\n"
             f"    if val == None:\n"
             f"        val = super(T,cls).__new__(cls)\n"
@@ -339,20 +332,19 @@ def _add_memoization(mod, whitelist, ext_key):
         # print(exec_str)
         exec(exec_str, exec_out)
 
-        T._memo_cache = WeakValueDictionary({})
-        T.__new__ = exec_out[name + "_new"]
+        ty._memo_cache = WeakValueDictionary({})
+        ty.__new__ = exec_out[name + "_new"]
 
-    def expand_sum(typ_name, sum_node):
-        T = getattr(mod, typ_name)
-        afields = sum_node.attributes
+    def expand_sum(sum_node):
+        attrs = sum_node.attributes
         for c in sum_node.types:
-            create_newfn(c.name, c.fields + afields)
+            create_newfn(c.name, c.fields + attrs)
 
     for nm, t in asdl_mod.types.items():
         if isinstance(t, asdl.Product):
             create_newfn(nm, t.fields)
         elif isinstance(t, asdl.Sum):
-            expand_sum(nm, t)
+            expand_sum(t)
         else:  # pragma: no cover
             assert False, "unexpected kind of asdl type"
 
@@ -377,6 +369,5 @@ def memo(mod, whitelist, ext_key=None):
     =================
     Nothing
     """
-    if ext_key is None:
-        ext_key = {}
+    ext_key = ext_key or {}
     _add_memoization(mod, whitelist, ext_key)
