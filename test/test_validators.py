@@ -35,6 +35,11 @@ def test_optional_may_be_none():
 
 
 def test_subclass_validator():
+    """
+    Test that Type[X] accepts class values which are subtypes of X.
+    """
+
+    # pylint: disable=too-few-public-methods,missing-class-docstring
     class Parent:
         pass
 
@@ -57,106 +62,124 @@ def test_subclass_validator():
 
 
 def test_adhoc_validator():
+    """
+    Test that user-defined functions may be used as ad-hoc validators, as long as they
+    return the normalized value or raise a ValidationError.
+    """
+
     def _valid_name(name):
-        if name in ('foo', 'bar'):
+        if name in ("foo", "bar"):
             return name
-        raise ValidationError('foo or bar', name)
+        raise ValidationError("foo or bar", name)
 
     test_adt = asdl_adt.ADT(
-        "module test_adt { foo = ( name x ) }",
-        ext_types={"name": _valid_name}
+        "module test_adt { foo = ( name x ) }", ext_types={"name": _valid_name}
     )
 
-    assert isinstance(test_adt.foo('foo'), test_adt.foo)
-    assert isinstance(test_adt.foo('bar'), test_adt.foo)
+    assert isinstance(test_adt.foo("foo"), test_adt.foo)
+    assert isinstance(test_adt.foo("bar"), test_adt.foo)
 
     with pytest.raises(ValidationError) as exc_info:
-        test_adt.foo('baz')
+        test_adt.foo("baz")
 
-    assert exc_info.value.expected == 'foo or bar'
-    assert exc_info.value.actual == 'baz'
+    assert exc_info.value.expected == "foo or bar"
+    assert exc_info.value.actual == "baz"
 
 
 def test_string_subset():
+    """
+    Test that instance_of(..., convert=True) works with str subtypes.
+    """
+
+    # pylint: disable=missing-class-docstring
     class Identifier(str):
-        _valid_re = re.compile(r"^(?:_\w|[a-zA-Z])\w*$")
+        valid_re = re.compile(r"^(?:_\w|[a-zA-Z])\w*$")
 
         def __new__(cls, name):
             name = str(name)
-            if Identifier._valid_re.match(name):
+            if Identifier.valid_re.match(name):
                 return super().__new__(cls, name)
-            raise ValidationError(Identifier._valid_re.pattern, name)
+            raise ValidationError(Identifier.valid_re.pattern, name)
 
     test_adt = asdl_adt.ADT(
         "module test_adt { foo = ( iden x ) }",
-        ext_types={"iden": instance_of(Identifier, convert=True)}
+        ext_types={"iden": instance_of(Identifier, convert=True)},
     )
 
-    assert isinstance(test_adt.foo('valid'), test_adt.foo)
-    assert isinstance(test_adt.foo('valid_0'), test_adt.foo)
-    assert isinstance(test_adt.foo('_01valid'), test_adt.foo)
-    assert isinstance(test_adt.foo('_0vAlId'), test_adt.foo)
-    assert isinstance(test_adt.foo(Identifier('_0vAlId')), test_adt.foo)
+    assert isinstance(test_adt.foo("valid"), test_adt.foo)
+    assert isinstance(test_adt.foo("valid_0"), test_adt.foo)
+    assert isinstance(test_adt.foo("_01valid"), test_adt.foo)
+    assert isinstance(test_adt.foo("_0vAlId"), test_adt.foo)
+    assert isinstance(test_adt.foo(Identifier("_0vAlId")), test_adt.foo)
 
-    assert test_adt.foo('_0vAlId') == test_adt.foo(Identifier('_0vAlId'))
-
-    with pytest.raises(ValidationError) as exc_info:
-        test_adt.foo('_')
-
-    assert exc_info.value.expected == Identifier._valid_re.pattern
-    assert exc_info.value.actual == '_'
+    assert test_adt.foo("_0vAlId") == test_adt.foo(Identifier("_0vAlId"))
 
     with pytest.raises(ValidationError) as exc_info:
-        test_adt.foo('01num')
+        test_adt.foo("_")
 
-    assert exc_info.value.expected == Identifier._valid_re.pattern
-    assert exc_info.value.actual == '01num'
+    assert exc_info.value.expected == Identifier.valid_re.pattern
+    assert exc_info.value.actual == "_"
+
+    with pytest.raises(ValidationError) as exc_info:
+        test_adt.foo("01num")
+
+    assert exc_info.value.expected == Identifier.valid_re.pattern
+    assert exc_info.value.actual == "01num"
 
 
 def test_custom_list():
+    """
+    Test that adhoc validators work in conjunction with lists
+    """
+
     def _valid_name(name):
-        if name in ('foo', 'bar'):
+        if name in ("foo", "bar"):
             return name
-        raise ValidationError('foo or bar', str)
+        raise ValidationError("foo or bar", str)
 
     test_adt = asdl_adt.ADT(
-        "module test_adt { foo = ( name* x ) }",
-        ext_types={"name": _valid_name}
+        "module test_adt { foo = ( name* x ) }", ext_types={"name": _valid_name}
     )
 
-    assert isinstance(test_adt.foo(['foo', 'bar', 'bar']), test_adt.foo)
+    assert isinstance(test_adt.foo(["foo", "bar", "bar"]), test_adt.foo)
 
     with pytest.raises(ValidationError) as exc_info:
-        test_adt.foo('foo')
+        test_adt.foo("foo")
 
     assert exc_info.value.expected == list
     assert exc_info.value.actual == str
 
     with pytest.raises(ValidationError) as exc_info:
-        test_adt.foo(['baz'])
+        test_adt.foo(["baz"])
 
-    assert exc_info.value.expected == List['foo or bar']
+    assert exc_info.value.expected == List["foo or bar"]
     assert exc_info.value.actual == List[str]
 
 
 def test_enum_type():
+    """
+    Test that enumerated Python types play nicely with the validation system
+    """
+
+    # pylint: disable=missing-class-docstring,disallowed-name
     class FooOrBar(Enum):
-        foo = 'foo'
-        bar = 'bar'
+        foo = "foo"
+        bar = "bar"
 
     test_adt = asdl_adt.ADT(
         "module test_adt { foo = ( name* x ) }",
-        ext_types={"name": instance_of(FooOrBar, convert=True)}
+        ext_types={"name": instance_of(FooOrBar, convert=True)},
     )
 
-    foo_obj = test_adt.foo(['foo', 'bar', 'bar'])
+    foo_obj = test_adt.foo(["foo", "bar", "bar"])
     assert isinstance(foo_obj, test_adt.foo)
     assert foo_obj.x == [FooOrBar.foo, FooOrBar.bar, FooOrBar.bar]
 
 
 def test_bad_validator():
-    with pytest.raises(ValueError, match='Unknown validator type'):
-        asdl_adt.ADT(
-            "module test_adt { foo = ( name* x ) }",
-            ext_types={"name": 3}
-        )
+    """
+    Test that an error is raised when proving an invalid validator type.
+    """
+
+    with pytest.raises(ValueError, match="Unknown validator type"):
+        asdl_adt.ADT("module test_adt { foo = ( name* x ) }", ext_types={"name": 3})

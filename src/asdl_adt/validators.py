@@ -6,6 +6,10 @@ from typing import Type
 
 
 class ValidationError(TypeError):
+    """
+    An error to raise due to an argument validation issue in an ASDL ADT field.
+    """
+
     def __init__(self, expected, actual):
         super().__init__()
 
