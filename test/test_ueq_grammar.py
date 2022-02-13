@@ -4,6 +4,7 @@ Test data structure invariants in a real-world grammar.
 
 import inspect
 from dataclasses import dataclass
+from types import ModuleType
 
 import pytest
 
@@ -49,9 +50,9 @@ def fixture_ueq_grammar():
 
 
 def _public_names(obj):
-    # If a class has __slots__, it does not have a __dict__.
-    # Old Python versions do nothing special with __slots__.
-    fields = getattr(obj, "__dict__", getattr(obj, "__slots__", {}))
+    # The module will use the __dict__ property here by necessity, but all the
+    # generated classes ought to use __slots__ for efficiency.
+    fields = obj.__dict__ if isinstance(obj, ModuleType) else obj.__slots__
     return set(filter(lambda x: not x.startswith("_"), fields))
 
 

@@ -2,12 +2,14 @@
 This is the main parsing and class metaprogramming module in ASDL-ADT.
 """
 import abc
+import functools
+import inspect
 import textwrap
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 from functools import cache
 from types import ModuleType
-from typing import Type, Any, Mapping, Optional, Collection, Sequence
+from typing import Type, Any, Mapping, Optional, Collection, List
 
 import asdl
 import attrs
@@ -15,6 +17,18 @@ import attrs
 
 def _no_init(self):
     pass
+
+
+def _normalize(func):
+    sig = inspect.signature(func)
+
+    @functools.wraps(func)
+    def _func(*args, **kwargs):
+        ba = sig.bind(*args, **kwargs)
+        args, kwargs = ba.args, ba.kwargs
+        return func(*args, **kwargs)
+
+    return _func
 
 
 def _make_validator(typ: Type[Any], seq: bool, opt: bool):
@@ -34,6 +48,15 @@ def _make_validator(typ: Type[Any], seq: bool, opt: bool):
         raise TypeError(f"expected: {expected}, actual: {actual}")
 
     return staticmethod(validate)
+
+
+class _AsdlAdtBase(ABC):
+    @abstractmethod
+    def __init__(self):
+        pass
+
+    def update(self, **kwargs):
+        return attrs.evolve(self, **kwargs)
 
 
 class _BuildClasses(asdl.VisitorBase):
@@ -62,18 +85,17 @@ class _BuildClasses(asdl.VisitorBase):
         self._base_types = {}
 
     @staticmethod
-    def _make_init(fields: Optional[OrderedDict[str, Any]]):
+    def _make_init(fields: List[str], validators: List[Any]):
         """
         Make an __init__ method that can be injected into a class.
         """
 
-        if fields is None:
-            return abstractmethod(_no_init)
+        assert len(fields) == len(validators)
 
         globals_dict = {}
         body = []
 
-        for name, validator in fields.items():
+        for name, validator in zip(fields, validators):
             if validator:
                 globals_dict[f"_validate_{name}"] = validator
                 body.append(f"_validate_{name}({name})")
@@ -98,56 +120,67 @@ class _BuildClasses(asdl.VisitorBase):
 
         return globals_dict["__init__"]
 
-    def _make_update(self, fields: Sequence[str]):
-        body = []
-        for field in fields:
-            body.append(f'{field} = kwargs.get("{field}", self.{field})')
-        body.append(f'return self.__class__({", ".join(fields)})')
+    @staticmethod
+    def _make_cached_new(cls, fields):
+        result = {"typ": cls}
+        exec(
+            textwrap.dedent(
+                f"""
+                def __new__(cls, {", ".join(fields)}):
+                    return super(typ, cls).__new__(cls)
+                """
+            ),
+            result,
+        )
+        newfn = _normalize(cache(result["__new__"]))
+        return newfn
 
-        result = {}
-        update_source = textwrap.dedent(
-            """
-            def update(self, **kwargs):
-            {body}
-            """
-        ).format(body=textwrap.indent("\n".join(body), "    "))
-        exec(update_source, result)
-        return result["update"]
-
-    def _maybe_memoize(self, typ: type):
-        if typ.__name__ in self._memoize:
-            @cache
-            def new_fn(inner_cls, *_, **__):
-                return super(typ, inner_cls).__new__(inner_cls)
-
-            typ.__new__ = new_fn
-
-    def _make_class(self, name: str, base: type, fields, **kwargs):
+    def _make_class(
+        self,
+        *,
+        name: str,
+        base: type,
+        fields: List[str],
+        init: Optional[Any],
+        **kwargs,
+    ):
+        init = {"__init__": init} if init else {}
         cls = attrs.frozen(
             type(
                 name,
                 (base,),
                 {
-                    "__init__": self._make_init(fields),
+                    **init,
                     "__qualname__": f"{self.module.__name__}.{name}",
-                    "__annotations__": {f: None for f in (fields or ())},
-                    "update": self._make_update(fields or ()),
+                    "__annotations__": {f: None for f in fields},
                     **kwargs,
                 },
             )
         )
-        self._maybe_memoize(cls)
+        if cls.__name__ in self._memoize:
+            cls.__new__ = self._make_cached_new(cls, fields)
         return cls
 
     def _make_base_type(self, typ: asdl.Type) -> type:
         if isinstance(typ.value, asdl.Product):
-            # The "base" type is the actual, final type for products, so tell
-            # attrs which fields to create now.
-            fields = {field.name: None for field in typ.value.fields}
+            return self._make_class(
+                name=typ.name,
+                base=_AsdlAdtBase,
+                fields=[f.name for f in typ.value.fields],
+                # The "base" type is the actual, final type for products, but the
+                # init function cannot create validators until all the types have
+                # been created, so skip creating it for now (will be attached in
+                # visitProduct).
+                init=None,
+            )
         else:
-            fields = {}
-
-        return self._make_class(typ.name, ABC, None, __annotations__=fields)
+            # Sum type superclass
+            return self._make_class(
+                name=typ.name,
+                base=_AsdlAdtBase,
+                fields=[],
+                init=abstractmethod(_no_init),
+            )
 
     # noinspection PyPep8Naming
     # pylint: disable=invalid-name
@@ -178,8 +211,7 @@ class _BuildClasses(asdl.VisitorBase):
         for f in prod.fields:
             self.visit(f, fields)
 
-        base_type.__init__ = self._make_init(fields)
-        base_type.update = self._make_update(fields)
+        base_type.__init__ = self._make_init(fields.keys(), fields.values())
         abc.update_abstractmethods(base_type)
 
     # noinspection PyPep8Naming
@@ -195,7 +227,12 @@ class _BuildClasses(asdl.VisitorBase):
         for f in cons.fields:
             self.visit(f, fields)
 
-        ctor_type = self._make_class(cons.name, base_type, fields)
+        ctor_type = self._make_class(
+            name=cons.name,
+            base=base_type,
+            fields=fields.keys(),
+            init=self._make_init(fields.keys(), fields.values()),
+        )
         setattr(self.module, cons.name, ctor_type)
 
     # noinspection PyPep8Naming
