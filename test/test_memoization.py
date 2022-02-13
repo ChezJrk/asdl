@@ -1,48 +1,40 @@
-import pytest
-
-import asdl_adt
-
-
-@pytest.fixture(scope="session")
-def memo():
-    memo_grammar = asdl_adt.ADT(
-        """
-        module memo {
-            memo_prod = ( int x, int y )
-        
-            memo_sum = A()
-                     | B( int val )
-            
-            normal_prod = ( int x, int y )
-            normal_sum = C()
-                       | D( int val )
-                       
-            partial_sum = E( int val ) | F()
-        }
-        """,
-    )
-    asdl_adt.memo(memo_grammar, ["memo_prod", "A", "B", "E"])
-    return memo_grammar
+"""
+Tests of ASDL-ADT's memoization functionality. Memoized constructors always return an
+identical node, given equal arguments (which therefore will not necessarily compare
+identical via "is" to the resulting object's fields, themselves)
+"""
 
 
-def test_memoization(memo):
-    assert memo.memo_prod(3, 4) is memo.memo_prod(3, 4)
-    assert memo.memo_prod(3, 4) is not memo.memo_prod(3, 5)
+def test_memoization(memo_grammar):
+    """
+    Test that memoized objects are identical (via is) and that non-memoized objects are
+    equal (via ==).
+    """
 
-    assert memo.A() is memo.A()
-    assert memo.B(3) is memo.B(3)
-    assert memo.B(3) is not memo.B(4)
+    assert memo_grammar.memo_prod(3, 4) is memo_grammar.memo_prod(3, 4)
+    assert memo_grammar.memo_prod(3, 4) is not memo_grammar.memo_prod(3, 5)
 
-    assert memo.normal_prod(3, 4) is not memo.normal_prod(3, 4)
-    assert memo.normal_prod(3, 4) == memo.normal_prod(3, 4)
+    assert memo_grammar.A() is memo_grammar.A()
+    assert memo_grammar.B(3, 4) is memo_grammar.B(3, 4)
+    assert memo_grammar.B(3, 4) is not memo_grammar.B(4, 4)
 
-    assert memo.C() is not memo.C()
-    assert memo.C() == memo.C()
+    assert memo_grammar.normal_prod(3, 4) is not memo_grammar.normal_prod(3, 4)
+    assert memo_grammar.normal_prod(3, 4) == memo_grammar.normal_prod(3, 4)
 
-    assert memo.D(3) is not memo.D(3)
-    assert memo.D(3) == memo.D(3)
+    assert memo_grammar.C() is not memo_grammar.C()
+    assert memo_grammar.C() == memo_grammar.C()
 
-    assert memo.E(3) is memo.E(3)
+    assert memo_grammar.D(3) is not memo_grammar.D(3)
+    assert memo_grammar.D(3) == memo_grammar.D(3)
 
-    assert memo.F() is not memo.F()
-    assert memo.F() == memo.F()
+    assert memo_grammar.E(3) is memo_grammar.E(3)
+
+    assert memo_grammar.F() is not memo_grammar.F()
+    assert memo_grammar.F() == memo_grammar.F()
+
+
+def test_memoized_kwargs(memo_grammar):
+    """
+    Test that the caching mechanism correctly handles keyword arguments
+    """
+    assert memo_grammar.B(3, 4) is memo_grammar.B(x=3, y=4)

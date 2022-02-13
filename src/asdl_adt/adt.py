@@ -1,213 +1,239 @@
 """
-A module for parsing ASDL grammars into Python Class hierarchies
+This is the main parsing and class metaprogramming module in ASDL-ADT.
 """
+from __future__ import annotations
 
-import sys
+import functools
+import inspect
+import textwrap
+from abc import ABC, abstractmethod
+from collections import OrderedDict
 from types import ModuleType
-from weakref import WeakValueDictionary
+from typing import Type, Any, Mapping, Optional, Collection, List, Union
 
 import asdl
+import attrs
 
 
-def _asdl_parse(asdl_str):
-    parser = asdl.ASDLParser()
-    module = parser.parse(asdl_str)
-    return module
+def _normalize(func):
+    signature = inspect.signature(func)
+
+    @functools.wraps(func)
+    def _func(*args, **kwargs):
+        call = signature.bind(*args, **kwargs)
+        return func(*call.args, **call.kwargs)
+
+    return _func
 
 
-def _build_superclasses(asdl_mod):
-    scs = {}
+def _make_validator(typ: Type[Any], seq: bool, opt: bool):
+    def validate(val):
+        def fail():
+            expected = typ.__qualname__
+            if seq:
+                expected = f"List[{expected}]"
+            actual = type(val).__qualname__
 
-    def create_invalid_init(name):
-        def invalid_init(self):
-            assert False, f"{name} should never be instantiated"
+            raise TypeError(f"expected: {expected}, actual: {actual}")
 
-        return invalid_init
+        if val is None:
+            if not opt:
+                fail()
+        elif seq:
+            if not isinstance(val, list):
+                fail()
+            if any(not isinstance(y, typ) for y in val):
+                fail()
+        else:
+            if not isinstance(val, typ):
+                fail()
 
-    for nm, v in asdl_mod.types.items():
-        if isinstance(v, asdl.Sum):
-            scs[nm] = type(nm, (), {"__init__": create_invalid_init(nm)})
-        elif isinstance(v, asdl.Product):
-            scs[nm] = type(nm, (), {})
-    return scs
-
-
-_builtin_checks = {
-    "string": lambda x: isinstance(x, str),
-    "int": lambda x: isinstance(x, int),
-    "object": lambda x: x is not None,
-    "float": lambda x: isinstance(x, float),
-    "bool": lambda x: isinstance(x, bool),
-}
-
-
-def _build_checks(scs, ext_checks):
-    checks = _builtin_checks.copy()
-
-    def make_check(superclass):
-        return lambda x: isinstance(x, superclass)
-
-    for nm in ext_checks:
-        checks[nm] = ext_checks[nm]
-    for nm in scs:
-        assert nm not in checks, f"Name conflict for type '{nm}'"
-        sc = scs[nm]
-        checks[nm] = make_check(sc)
-    return checks
+    return validate
 
 
-def _build_classes(asdl_mod, ext_checks):
-    SC = _build_superclasses(asdl_mod)
-    CHK = _build_checks(SC, ext_checks)
+# pylint: disable=too-few-public-methods
+class _AsdlAdtBase(ABC):
+    @abstractmethod
+    def __init__(self):  # pragma: no cover (unreachable)
+        assert False, "Should be unreachable."
 
-    mod = ModuleType(asdl_mod.name)
-    # TODO: Investigate how to make generated modules fully native/safe/reliable
-    sys.modules[asdl_mod.name] = mod  # register the new module
+    def update(self, **kwargs):
+        """
+        Useful wrapper for creating a copy of an instance of a generated class,
+        with only certain fields changed.
+        """
+        return attrs.evolve(self, **kwargs)
 
-    Err = type(asdl_mod.name + "Err", (Exception,), {})
 
-    def basic_check(i, name, argname, typ, indent="    "):
-        typname = typ
-        if typ in SC:
-            typname = asdl_mod.name + "." + typ
-        return (
-            f"{indent}if not CHK['{typ}']({argname}):\n"
-            f'{indent}    raise TypeError(\'expected arg {i} "{name}" to be type "{typname}"\')'
+class _BuildClasses(asdl.VisitorBase):
+    """A visitor that constructs an IR module from a parsed ASDL tree."""
+
+    _builtin_types = {
+        "bool": bool,
+        "float": float,
+        "int": int,
+        "object": object,
+        "string": str,
+    }
+
+    def __init__(
+        self,
+        ext_types: Optional[Mapping[str, type]] = None,
+        memoize: Optional[Collection[str]] = None,
+    ):
+        super().__init__()
+        self.module: Optional[ModuleType] = None
+        self._memoize = memoize or set()
+        self._type_map = {
+            **_BuildClasses._builtin_types,
+            **(ext_types or {}),
+        }
+        self._base_types = {}
+
+    @staticmethod
+    def _make_function(name: str, args: List[str], body: List[str], **context):
+        body = body or ["pass"]
+        body = textwrap.indent("\n".join(body), " " * 4)
+        source = f'def {name}({", ".join(args)}):\n' + body
+        # exec required because Python functions can't have dynamically named arguments.
+        exec(source, context)  # pylint: disable=W0122
+        return context[name]
+
+    @staticmethod
+    def _init_fn(fields: OrderedDict[str, Any]):
+        """
+        Make an __init__ method that can be injected into a class.
+        """
+        context = {}
+        body = []
+
+        for name, validator in fields.items():
+            if validator:
+                context[f"_validate_{name}"] = validator
+                body.append(f"_validate_{name}({name})")
+
+            body.append(f"object.__setattr__(self, '{name}', {name})")
+
+        args = ["self"] + list(fields)
+        return _BuildClasses._make_function("__init__", args, body, **context)
+
+    @staticmethod
+    def _cached_new_fn(supertype, fields):
+        new_function = _BuildClasses._make_function(
+            "__new__",
+            ["cls"] + list(fields),
+            ["return super(supertype, cls).__new__(cls)"],
+            supertype=supertype,
+        )
+        return _normalize(functools.lru_cache(maxsize=None)(new_function))
+
+    def _adt_class(self, *, name, base, fields: Union[List[str], OrderedDict]):
+        basename = self.module.__name__  # pylint: disable=no-member
+        members = {
+            **({} if isinstance(fields, list) else {"__init__": self._init_fn(fields)}),
+            "__qualname__": f"{basename}.{name}",
+            "__annotations__": {f: None for f in fields},
+        }
+        cls = attrs.frozen(init=False)(type(name, (base,), members))
+        if cls.__name__ in self._memoize:
+            cls.__new__ = self._cached_new_fn(cls, fields)
+        return cls
+
+    def _visit_fields(self, node, attributes=None):
+        validator_map = OrderedDict()
+        for field in node.fields + (attributes or []):
+            self.visit(field, validator_map)
+        return validator_map
+
+    # noinspection PyPep8Naming
+    # pylint: disable=invalid-name
+    def visitModule(self, mod: asdl.Module):
+        """
+        Create a new Python module and populate it with types corresponding to the
+        given ASDL definitions.
+        """
+        self.module = ModuleType(mod.name)
+
+        # Collect top-level names as stub/abstract classes
+        for dfn in mod.dfns:
+            # The "base" type is the actual, final type for products, but we cannot
+            # create validators for the __init__ function until all the types have
+            # been created, so we will wait until visitProduct is called later to
+            # attach it.
+            base_type = self._adt_class(
+                name=dfn.name,
+                base=_AsdlAdtBase,
+                fields=(
+                    [f.name for f in dfn.value.fields]
+                    if isinstance(dfn.value, asdl.Product)
+                    else []
+                ),
+            )
+            setattr(self.module, dfn.name, base_type)
+            self._base_types[dfn.name] = base_type
+            self._type_map[dfn.name] = base_type
+
+        # Fill in classes
+        for dfn in mod.dfns:
+            self.visit(dfn)
+
+    # noinspection PyPep8Naming
+    # pylint: disable=invalid-name
+    def visitType(self, typ: asdl.Type):
+        """
+        Forwards to either the sum or product handler
+        """
+        self.visit(typ.value, self._base_types[typ.name])
+
+    # noinspection PyPep8Naming
+    # pylint: disable=invalid-name
+    def visitProduct(self, prod: asdl.Product, base_type):
+        """
+        Creates a new data type for the current product type and adds it to the module.
+        """
+        base_type.__init__ = self._init_fn(self._visit_fields(prod))
+        base_type.__abstractmethods__ = frozenset(
+            base_type.__abstractmethods__ - {"__init__"}
         )
 
-    def opt_check(i, name, argname, typ, indent="    "):
-        subidnt = indent + "    "
-        return (
-            f"{indent}if {argname} is not None:\n"
-            f"{basic_check(i, name, argname, typ, subidnt)}"
+    # noinspection PyPep8Naming
+    # pylint: disable=invalid-name
+    def visitSum(self, sum_node: asdl.Sum, base_type):
+        """
+        Adds all the constructors associated with this sum type to the module.
+        """
+        for t in sum_node.types:
+            self.visit(t, base_type, sum_node.attributes)
+
+    # noinspection PyPep8Naming
+    # pylint: disable=invalid-name
+    def visitConstructor(self, cons: asdl.Constructor, base_type, attributes):
+        """
+        Creates a new data type for the current constructor and adds it to the module.
+        """
+        ctor_type = self._adt_class(
+            name=cons.name,
+            base=base_type,
+            fields=self._visit_fields(cons, attributes),
+        )
+        setattr(self.module, cons.name, ctor_type)
+
+    # noinspection PyPep8Naming
+    # pylint: disable=invalid-name
+    def visitField(self, field: asdl.Field, fields: OrderedDict):
+        """
+        Updates the "fields" dict with a mapping from field name to validator.
+        """
+        fields[field.name] = _make_validator(
+            self._type_map[field.type], field.seq, field.opt
         )
 
-    def seq_check(i, name, argname, typ, indent="    "):
-        return (
-            f"{indent}if not type({argname}) is list:\n"
-            f"{indent}    raise TypeError('expected arg {i} \"{name}\" to be a list')\n"
-            f"{indent}for j,e in enumerate({argname}):\n"
-            f"{basic_check(i, name + '[]', argname + '[j]', typ, indent + '    ')}"
-        )
 
-    def create_initfn(C_name, fields):
-        nameargs = ", ".join([f.name for i, f in enumerate(fields)])
-        argstr = ", ".join([f"arg_{i}" for i, f in enumerate(fields)])
-        checks = "\n".join(
-            [
-                seq_check(i, f.name, f"arg_{i}", f.type)
-                if f.seq
-                else (
-                    opt_check(i, f.name, f"arg_{i}", f.type)
-                    if f.opt
-                    else basic_check(i, f.name, f"arg_{i}", f.type)
-                )
-                for i, f in enumerate(fields)
-            ]
-        )
-        assign = "\n    ".join(
-            [f"self.{f.name} = arg_{i}" for i, f in enumerate(fields)]
-        )
-        if not fields:
-            checks = "    pass"
-            assign = "pass"
-
-        exec_out = {"Err": Err, "CHK": CHK}
-        exec_str = (
-            f"def {C_name}_init_inner(self,{argstr}):\n"
-            f"{checks}\n"
-            f"    {assign}\n"
-            f"def {C_name}_init(self,{nameargs}):\n"
-            f"    {C_name}_init_inner(self,{nameargs})"
-        )
-        # un-comment this line to see what's
-        # really going on
-        # print(exec_str)
-        exec(exec_str, exec_out)
-        return exec_out[C_name + "_init"]
-
-    def create_reprfn(C_name, fields):
-        prints = ",".join([f"{f.name}={{repr(self.{f.name})}}" for f in fields])
-        exec_out = {"Err": Err}
-        exec_str = f"def {C_name}_repr(self):" f'\n    return f"{C_name}({prints})"'
-        # un-comment this line to see what's
-        # really going on
-        # print(exec_str)
-        exec(exec_str, exec_out)
-        return exec_out[C_name + "_repr"]
-
-    def create_eqfn(C_name, fields):
-        compares = " and ".join(
-            ["type(self) is type(o)"]
-            + [f"(self.{f.name} == o.{f.name})" for f in fields]
-        )
-        exec_out = {"Err": Err}
-        exec_str = f"def {C_name}_eq(self,o):" f"\n    return {compares}"
-        # un-comment this line to see what's
-        # really going on
-        # print(exec_str)
-        exec(exec_str, exec_out)
-        return exec_out[C_name + "_eq"]
-
-    def create_hashfn(C_name, fields):
-        hashes = ",".join([f"type(self)"] + [f"self.{f.name}" for f in fields])
-        exec_out = {"Err": Err}
-        exec_str = f"def {C_name}_hash(self):" f"\n    return hash(({hashes}))"
-        # un-comment this line to see what's
-        # really going on
-        # print(exec_str)
-        exec(exec_str, exec_out)
-        return exec_out[C_name + "_hash"]
-
-    def create_prod(name, prod_node):
-        C = SC[name]
-        fields = prod_node.fields
-        C.__init__ = create_initfn(name, fields)
-        C.__repr__ = create_reprfn(name, fields)
-        C.__eq__ = create_eqfn(name, fields)
-        C.__hash__ = create_hashfn(name, fields)
-        C.__slots__ = tuple(f.name for f in fields)
-        C.__match_args__ = tuple(f.name for f in fields)
-        return C
-
-    def create_sum_constructor(cname, ty, fields):
-        return type(
-            cname,
-            (ty,),
-            {
-                "__init__": create_initfn(cname, fields),
-                "__repr__": create_reprfn(cname, fields),
-                "__eq__": create_eqfn(cname, fields),
-                "__hash__": create_hashfn(cname, fields),
-                '__slots__': tuple(f.name for f in fields),
-                '__match_args__': tuple(f.name for f in fields),
-            },
-        )
-
-    def create_sum(type_name, sum_node):
-        T = SC[type_name]
-        afields = sum_node.attributes
-        for c in sum_node.types:
-            C = create_sum_constructor(c.name, T, c.fields + afields)
-            assert not hasattr(
-                mod, c.name
-            ), f"name '{c.name}' conflict in module '{mod}'"
-            setattr(T, c.name, C)
-            setattr(mod, c.name, C)
-        return T
-
-    for nm, t in asdl_mod.types.items():
-        if isinstance(t, asdl.Product):
-            setattr(mod, nm, create_prod(nm, t))
-        elif isinstance(t, asdl.Sum):
-            setattr(mod, nm, create_sum(nm, t))
-        else:  # pragma nocover - very defensive
-            assert False, "unexpected kind of asdl type"
-
-    return mod
-
-
-def ADT(asdl_str, ext_checks=None):
+def ADT(  # pylint: disable=invalid-name
+    asdl_str: str,
+    ext_types: Optional[Mapping[str, type]] = None,
+    memoize: Optional[Collection[str]] = None,
+):
     """Function that converts an ASDL grammar into a Python Module.
 
     The returned module will contain one class for every ASDL type
@@ -233,15 +259,17 @@ def ADT(asdl_str, ext_checks=None):
     =================
     asdl_str : str
         The ASDL definition string
-    ext_checks : dict of functions, optional
-        Type-checking functions for all external (undefined) types
-        that are not "built-in".
-        "built-in" types, and corresponding Python types are
-        *   'string' - str
-        *   'int' - int
-        *   'float' - float
+    ext_types : Optional[Mapping[str, type]]
+        A mapping of custom type names to Python types. Used to create validators for
+        the __init__ method of generated classes. Several built-in types are implied,
+        with the following corresponding Python types:
         *   'bool' - bool
+        *   'float' - float
+        *   'int' - int
         *   'object' - (anything except None)
+        *   'string' - str
+    memoize : Optional[Collection[str]]
+        collection of constructor names to memoize, optional
 
     Returns
     =================
@@ -262,114 +290,19 @@ def ADT(asdl_str, ext_checks=None):
             "id" : lambda x: type(x) is str and str.isalnum(),
         })
     """
-    ext_checks = ext_checks or {}
+    asdl_ast = asdl.ASDLParser().parse(asdl_str)
 
-    asdl_ast = _asdl_parse(asdl_str)
-    mod = _build_classes(asdl_ast, ext_checks)
-    # cache values in case we might want them
-    mod._ext_checks = ext_checks
-    mod._ast = asdl_ast
-    mod._defstr = asdl_str
+    builder = _BuildClasses(ext_types, memoize)
+    builder.visit(asdl_ast)
+    mod = builder.module
 
     mod.__doc__ = (
-        f"ASDL Module Generated by ADT\n\n" f"Original ASDL description:\n{asdl_str}"
+        textwrap.dedent(
+            """
+            ASDL Module generated by asdl_adt
+            Original ASDL description:
+            """
+        )
+        + textwrap.dedent(asdl_str)
     )
     return mod
-
-
-_builtin_keymap = {
-    "string": lambda x: x,
-    "int": lambda x: x,
-    "object": lambda x: x,
-    "float": lambda x: x,
-    "bool": lambda x: x,
-}
-
-
-def _add_memoization(mod, whitelist, ext_key):
-    asdl_mod = mod._ast
-
-    keymap = _builtin_keymap.copy()
-    for nm, fn in ext_key.items():
-        keymap[nm] = fn
-    for nm in asdl_mod.types:
-        keymap[nm] = id
-
-    def create_listkey(f):
-        i = "i" if f.name != "i" else "ii"
-        return f"tuple( K['{f.type}']({i}) for {i} in {f.name} ),"
-
-    def create_optkey(f):
-        return f"None if {f.name} is None else K['{f.type}']({f.name}),"
-
-    def create_newfn(name, fields):
-        if name not in whitelist:
-            return
-        ty = getattr(mod, name)
-
-        args = ", ".join([f.name for f in fields])
-        key = "({})".format(
-            "".join(
-                [
-                    create_listkey(f)
-                    if f.seq
-                    else (create_optkey(f) if f.opt else f"K['{f.type}']({f.name}),")
-                    for f in fields
-                ]
-            )
-        )
-
-        exec_out = {"T": ty, "K": keymap}
-        exec_str = (
-            f"def {name}_new(cls, {args}):\n"
-            f"    key = {key}\n"
-            f"    val = T._memo_cache.get(key)\n"
-            f"    if val == None:\n"
-            f"        val = super(T,cls).__new__(cls)\n"
-            f"        T._memo_cache[key] = val\n"
-            f"    return val"
-        )
-        # un-comment this line to see what's
-        # really going on
-        # print(exec_str)
-        exec(exec_str, exec_out)
-
-        ty._memo_cache = WeakValueDictionary({})
-        ty.__new__ = exec_out[name + "_new"]
-
-    def expand_sum(sum_node):
-        attrs = sum_node.attributes
-        for c in sum_node.types:
-            create_newfn(c.name, c.fields + attrs)
-
-    for nm, t in asdl_mod.types.items():
-        if isinstance(t, asdl.Product):
-            create_newfn(nm, t.fields)
-        elif isinstance(t, asdl.Sum):
-            expand_sum(t)
-        else:  # pragma: nocover - very defensive
-            assert False, "unexpected kind of asdl type"
-
-
-def memo(mod, whitelist, ext_key=None):
-    """Function that wraps ADT class constructors with memoization.
-
-    This function should be called right after construction of an ADT
-    module.
-
-    Parameters
-    =================
-    mod : ADT module
-        Created by asdl_adt.ADT
-    whitelist : list of strings
-        Names of every constructor in `mod` that will be memoized.
-    ext_key : dict of functions, optional
-        Functions for converting external types into key-values for
-        memoization. "built-in" type key-functions are built-in.
-
-    Returns
-    =================
-    Nothing
-    """
-    ext_key = ext_key or {}
-    _add_memoization(mod, whitelist, ext_key)
