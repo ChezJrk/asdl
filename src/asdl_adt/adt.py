@@ -94,7 +94,7 @@ class _BuildClasses(asdl.VisitorBase):
         return context[name]
 
     @staticmethod
-    def _make_init(fields: List[str], validators: List[Any]):
+    def _init_fn(fields: List[str], validators: List[Any]):
         """
         Make an __init__ method that can be injected into a class.
         """
@@ -114,7 +114,7 @@ class _BuildClasses(asdl.VisitorBase):
         return _BuildClasses._make_function("__init__", args, body, **context)
 
     @staticmethod
-    def _make_cached_new(cls, fields):
+    def _cached_new_fn(cls, fields):
         new_function = _BuildClasses._make_function(
             "__new__",
             ["cls"] + list(fields),
@@ -123,13 +123,13 @@ class _BuildClasses(asdl.VisitorBase):
         )
         return _normalize(cache(new_function))
 
-    def _make_class(self, name, base, fields, init=None):
+    def _adt_class(self, name, base, fields, init=None):
         type_dict = {"__init__": init} if init else {}
         type_dict["__qualname__"] = f"{self.module.__name__}.{name}"
         type_dict["__annotations__"] = {f: None for f in fields}
         cls = attrs.frozen(init=False)(type(name, (base,), type_dict))
         if cls.__name__ in self._memoize:
-            cls.__new__ = self._make_cached_new(cls, fields)
+            cls.__new__ = self._cached_new_fn(cls, fields)
         return cls
 
     # noinspection PyPep8Naming
@@ -143,7 +143,7 @@ class _BuildClasses(asdl.VisitorBase):
             # create validators for the __init__ function until all the types have
             # been created, so we will wait until visitProduct is called later to
             # attach it.
-            base_type = self._make_class(
+            base_type = self._adt_class(
                 name=dfn.name,
                 base=_AsdlAdtBase,
                 fields=(
@@ -173,7 +173,7 @@ class _BuildClasses(asdl.VisitorBase):
         for f in prod.fields:
             self.visit(f, fields)
 
-        base_type.__init__ = self._make_init(fields.keys(), fields.values())
+        base_type.__init__ = self._init_fn(fields.keys(), fields.values())
         abc.update_abstractmethods(base_type)
 
     # noinspection PyPep8Naming
@@ -189,11 +189,11 @@ class _BuildClasses(asdl.VisitorBase):
         for f in cons.fields:
             self.visit(f, fields)
 
-        ctor_type = self._make_class(
+        ctor_type = self._adt_class(
             name=cons.name,
             base=base_type,
             fields=fields.keys(),
-            init=self._make_init(fields.keys(), fields.values()),
+            init=self._init_fn(fields.keys(), fields.values()),
         )
         setattr(self.module, cons.name, ctor_type)
 
