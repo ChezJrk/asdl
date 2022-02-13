@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 from collections import OrderedDict
 from functools import cache
 from types import ModuleType
-from typing import Type, Any, Mapping, Optional, Collection, List
+from typing import Type, Any, Mapping, Optional, Collection, List, Union
 
 import asdl
 import attrs
@@ -94,16 +94,14 @@ class _BuildClasses(asdl.VisitorBase):
         return context[name]
 
     @staticmethod
-    def _init_fn(fields: List[str], validators: List[Any]):
+    def _init_fn(fields: OrderedDict[str, Any]):
         """
         Make an __init__ method that can be injected into a class.
         """
-        assert len(fields) == len(validators)
-
         context = {}
         body = []
 
-        for name, validator in zip(fields, validators):
+        for name, validator in fields.items():
             if validator:
                 context[f"_validate_{name}"] = validator
                 body.append(f"_validate_{name}({name})")
@@ -123,11 +121,13 @@ class _BuildClasses(asdl.VisitorBase):
         )
         return _normalize(cache(new_function))
 
-    def _adt_class(self, name, base, fields, init=None):
-        type_dict = {"__init__": init} if init else {}
-        type_dict["__qualname__"] = f"{self.module.__name__}.{name}"
-        type_dict["__annotations__"] = {f: None for f in fields}
-        cls = attrs.frozen(init=False)(type(name, (base,), type_dict))
+    def _adt_class(self, *, name, base, fields: Union[List[str], OrderedDict]):
+        members = {
+            **({} if isinstance(fields, list) else {"__init__": self._init_fn(fields)}),
+            "__qualname__": f"{self.module.__name__}.{name}",
+            "__annotations__": {f: None for f in fields},
+        }
+        cls = attrs.frozen(init=False)(type(name, (base,), members))
         if cls.__name__ in self._memoize:
             cls.__new__ = self._cached_new_fn(cls, fields)
         return cls
@@ -173,7 +173,7 @@ class _BuildClasses(asdl.VisitorBase):
         for f in prod.fields:
             self.visit(f, fields)
 
-        base_type.__init__ = self._init_fn(fields.keys(), fields.values())
+        base_type.__init__ = self._init_fn(fields)
         abc.update_abstractmethods(base_type)
 
     # noinspection PyPep8Naming
@@ -192,8 +192,7 @@ class _BuildClasses(asdl.VisitorBase):
         ctor_type = self._adt_class(
             name=cons.name,
             base=base_type,
-            fields=fields.keys(),
-            init=self._init_fn(fields.keys(), fields.values()),
+            fields=fields,
         )
         setattr(self.module, cons.name, ctor_type)
 
