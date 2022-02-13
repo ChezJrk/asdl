@@ -1,10 +1,26 @@
 """
 Common fixtures defining grammars that are reused across multiple tests
 """
+from types import ModuleType
 
 import pytest
 
 from asdl_adt import ADT
+
+
+@pytest.fixture(scope="session")
+def public_names():
+    """
+    A helper function for getting the set of public fields of a Python object
+    """
+
+    def _public_names(obj):
+        # The module will use the __dict__ property here by necessity, but all the
+        # generated classes ought to use __slots__ for efficiency.
+        fields = obj.__dict__ if isinstance(obj, ModuleType) else obj.__slots__
+        return set(filter(lambda x: not x.startswith("_"), fields))
+
+    return _public_names
 
 
 @pytest.fixture(scope="session")

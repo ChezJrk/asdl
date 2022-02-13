@@ -139,9 +139,9 @@ class _BuildClasses(asdl.VisitorBase):
             cls.__new__ = self._cached_new_fn(cls, fields)
         return cls
 
-    def _visit_fields(self, node):
+    def _visit_fields(self, node, attributes=None):
         validator_map = OrderedDict()
-        for field in node.fields:
+        for field in node.fields + (attributes or []):
             self.visit(field, validator_map)
         return validator_map
 
@@ -187,7 +187,7 @@ class _BuildClasses(asdl.VisitorBase):
 
     # noinspection PyPep8Naming
     # pylint: disable=invalid-name
-    def visitProduct(self, prod: asdl.Product, base_type: Type[ABC]):
+    def visitProduct(self, prod: asdl.Product, base_type):
         """
         Creates a new data type for the current product type and adds it to the module.
         """
@@ -196,23 +196,23 @@ class _BuildClasses(asdl.VisitorBase):
 
     # noinspection PyPep8Naming
     # pylint: disable=invalid-name
-    def visitSum(self, sum_node: asdl.Sum, base_type: Type[ABC]):
+    def visitSum(self, sum_node: asdl.Sum, base_type):
         """
         Adds all the constructors associated with this sum type to the module.
         """
         for t in sum_node.types:
-            self.visit(t, base_type)
+            self.visit(t, base_type, sum_node.attributes)
 
     # noinspection PyPep8Naming
     # pylint: disable=invalid-name
-    def visitConstructor(self, cons: asdl.Constructor, base_type: Type[ABC]):
+    def visitConstructor(self, cons: asdl.Constructor, base_type, attributes):
         """
         Creates a new data type for the current constructor and adds it to the module.
         """
         ctor_type = self._adt_class(
             name=cons.name,
             base=base_type,
-            fields=self._visit_fields(cons),
+            fields=self._visit_fields(cons, attributes),
         )
         setattr(self.module, cons.name, ctor_type)
 
@@ -227,7 +227,7 @@ class _BuildClasses(asdl.VisitorBase):
         )
 
 
-def ADT(
+def ADT(  # pylint: disable=invalid-name
     asdl_str: str,
     ext_types: Optional[Mapping[str, type]] = None,
     memoize: Optional[Collection[str]] = None,

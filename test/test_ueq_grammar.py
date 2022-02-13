@@ -4,7 +4,6 @@ Test data structure invariants in a real-world grammar.
 
 import inspect
 from dataclasses import dataclass
-from types import ModuleType
 
 import pytest
 
@@ -49,19 +48,12 @@ def fixture_ueq_grammar():
     )
 
 
-def _public_names(obj):
-    # The module will use the __dict__ property here by necessity, but all the
-    # generated classes ought to use __slots__ for efficiency.
-    fields = obj.__dict__ if isinstance(obj, ModuleType) else obj.__slots__
-    return set(filter(lambda x: not x.startswith("_"), fields))
-
-
-def test_module_names(ueq_grammar):
+def test_module_names(ueq_grammar, public_names):
     """
     Test that the generated module has the exact set of expected exports.
     """
 
-    assert _public_names(ueq_grammar) == {
+    assert public_names(ueq_grammar) == {
         "problem",
         "pred",
         "Conj",
@@ -147,7 +139,7 @@ def test_create_empty_problem(ueq_grammar):
     assert problem.knowns == []
 
 
-def test_create_problem(ueq_grammar):
+def test_create_problem(ueq_grammar, public_names):
     """
     Test that constructed problem instances have the expected structure
     """
@@ -163,10 +155,10 @@ def test_create_problem(ueq_grammar):
     assert problem.preds == [
         ueq_grammar.Eq(ueq_grammar.Var(Sym("x")), ueq_grammar.Var(Sym("y")))
     ]
-    assert _public_names(problem) == {"holes", "knowns", "preds"}
+    assert public_names(problem) == {"holes", "knowns", "preds"}
 
 
-def test_create_pred(ueq_grammar):
+def test_create_pred(ueq_grammar, public_names):
     """
     Test that constructed predicates have the expected structure
     """
@@ -175,26 +167,26 @@ def test_create_pred(ueq_grammar):
     assert isinstance(eq_node, ueq_grammar.Eq)
     assert eq_node.lhs == ueq_grammar.Var(Sym("x"))
     assert eq_node.rhs == ueq_grammar.Const(3)
-    assert _public_names(eq_node) == {"lhs", "rhs"}
+    assert public_names(eq_node) == {"lhs", "rhs"}
 
     cases = ueq_grammar.Cases(Sym("y"), [eq_node])
     assert isinstance(cases, ueq_grammar.Cases)
     assert cases.case_var == Sym("y")
     assert cases.cases == [eq_node]
-    assert _public_names(cases) == {"case_var", "cases"}
+    assert public_names(cases) == {"case_var", "cases"}
 
     disj = ueq_grammar.Disj([eq_node])
     assert isinstance(disj, ueq_grammar.Disj)
     assert disj.preds == [eq_node]
-    assert _public_names(disj) == {"preds"}
+    assert public_names(disj) == {"preds"}
 
     conj = ueq_grammar.Conj([eq_node])
     assert isinstance(conj, ueq_grammar.Conj)
     assert conj.preds == [eq_node]
-    assert _public_names(conj) == {"preds"}
+    assert public_names(conj) == {"preds"}
 
 
-def test_create_expr(ueq_grammar):
+def test_create_expr(ueq_grammar, public_names):
     """
     Test that constructed expressions have the expected structure
     """
@@ -202,22 +194,22 @@ def test_create_expr(ueq_grammar):
     const = ueq_grammar.Const(3)
     assert isinstance(const, ueq_grammar.Const)
     assert const.val == 3
-    assert _public_names(const) == {"val"}
+    assert public_names(const) == {"val"}
 
     var = ueq_grammar.Var(Sym("foo"))
     assert isinstance(var, ueq_grammar.Var)
     assert var.name == Sym("foo")
-    assert _public_names(var) == {"name"}
+    assert public_names(var) == {"name"}
 
     add = ueq_grammar.Add(var, const)
     assert isinstance(add, ueq_grammar.Add)
     assert add.lhs == var and add.rhs == const
-    assert _public_names(add) == {"lhs", "rhs"}
+    assert public_names(add) == {"lhs", "rhs"}
 
     scale = ueq_grammar.Scale(5, var)
     assert isinstance(scale, ueq_grammar.Scale)
     assert scale.coeff == 5 and scale.e == var
-    assert _public_names(scale) == {"coeff", "e"}
+    assert public_names(scale) == {"coeff", "e"}
 
 
 def test_invalid_arg_type_throws(ueq_grammar):
