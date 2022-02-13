@@ -4,10 +4,12 @@ Test data structure invariants in a real-world grammar.
 
 import inspect
 from dataclasses import dataclass
+from typing import List
 
 import pytest
 
 from asdl_adt import ADT
+from asdl_adt.validators import ValidationError
 
 
 @dataclass(frozen=True)
@@ -217,8 +219,14 @@ def test_invalid_arg_type_throws(ueq_grammar):
     Test that generated data type constructors validate the types of their arguments.
     """
 
-    with pytest.raises(TypeError, match=r"expected: Sym, actual: str"):
+    with pytest.raises(ValidationError) as exc_info:
         ueq_grammar.Var("not-a-sym")
 
-    with pytest.raises(TypeError, match=r"expected: List\[UEq\.pred\], actual: list"):
+    assert exc_info.value.expected == Sym
+    assert exc_info.value.actual == str
+
+    with pytest.raises(ValidationError) as exc_info:
         ueq_grammar.Conj([3])
+
+    assert exc_info.value.expected == List[ueq_grammar.pred]
+    assert exc_info.value.actual == List[int]

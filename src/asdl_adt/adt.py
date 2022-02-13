@@ -6,13 +6,16 @@ from __future__ import annotations
 import functools
 import inspect
 import textwrap
+import typing
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 from types import ModuleType
-from typing import Type, Any, Mapping, Optional, Collection, List, Union
+from typing import Any, Mapping, Callable, Optional, Collection, List, Union, Type
 
 import asdl
 import attrs
+
+from asdl_adt.validators import ValidationError, instance_of, subclass_of
 
 
 def _normalize(func):
@@ -26,27 +29,20 @@ def _normalize(func):
     return _func
 
 
-def _make_validator(typ: Type[Any], seq: bool, opt: bool):
+def _make_validator(point_valid, seq: bool, opt: bool):
     def validate(val):
-        def fail():
-            expected = typ.__qualname__
-            if seq:
-                expected = f"List[{expected}]"
-            actual = type(val).__qualname__
+        if val is None and opt:
+            return opt
 
-            raise TypeError(f"expected: {expected}, actual: {actual}")
-
-        if val is None:
-            if not opt:
-                fail()
-        elif seq:
+        if seq:
             if not isinstance(val, list):
-                fail()
-            if any(not isinstance(y, typ) for y in val):
-                fail()
-        else:
-            if not isinstance(val, typ):
-                fail()
+                raise ValidationError(list, type(val))
+            try:
+                return [point_valid(y) for y in val]
+            except ValidationError as err:
+                raise ValidationError(List[err.expected], List[err.actual]) from err
+
+        return point_valid(val)
 
     return validate
 
@@ -110,7 +106,7 @@ class _BuildClasses(asdl.VisitorBase):
         for name, validator in fields.items():
             if validator:
                 context[f"_validate_{name}"] = validator
-                body.append(f"_validate_{name}({name})")
+                body.append(f"{name} = _validate_{name}({name})")
 
             body.append(f"object.__setattr__(self, '{name}', {name})")
 
@@ -193,7 +189,7 @@ class _BuildClasses(asdl.VisitorBase):
         """
         base_type.__init__ = self._init_fn(self._visit_fields(prod))
         base_type.__abstractmethods__ = frozenset(
-            base_type.__abstractmethods__ - {"__init__"}
+            set(base_type.__abstractmethods__) - {"__init__"}
         )
 
     # noinspection PyPep8Naming
@@ -225,13 +221,28 @@ class _BuildClasses(asdl.VisitorBase):
         Updates the "fields" dict with a mapping from field name to validator.
         """
         fields[field.name] = _make_validator(
-            self._type_map[field.type], field.seq, field.opt
+            self._get_point_validator(field), field.seq, field.opt
         )
+
+    def _get_point_validator(self, field: asdl.Field):
+        point_validator = self._type_map[field.type]
+
+        if isinstance(point_validator, type):
+            return instance_of(point_validator)
+
+        if isinstance(point_validator, type(Type[object])):
+            (typ,) = typing.get_args(point_validator)
+            return subclass_of(typ)
+
+        if callable(point_validator):
+            return point_validator
+
+        raise ValueError(f"Unknown validator type {type(point_validator)}")
 
 
 def ADT(  # pylint: disable=invalid-name
     asdl_str: str,
-    ext_types: Optional[Mapping[str, type]] = None,
+    ext_types: Optional[Mapping[str, Union[type, Callable]]] = None,
     memoize: Optional[Collection[str]] = None,
 ):
     """Function that converts an ASDL grammar into a Python Module.
