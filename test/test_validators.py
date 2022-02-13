@@ -5,7 +5,7 @@ Tests of validator edge cases
 # pylint: disable=no-member
 import re
 from enum import Enum
-from typing import Type, List
+from typing import Type, List, Literal
 
 import pytest
 
@@ -70,7 +70,7 @@ def test_adhoc_validator():
     def _valid_name(name):
         if name in ("foo", "bar"):
             return name
-        raise ValidationError("foo or bar", name)
+        raise ValidationError(Literal["foo", "bar"], str)
 
     test_adt = asdl_adt.ADT(
         "module test_adt { foo = ( name x ) }", ext_types={"name": _valid_name}
@@ -82,8 +82,8 @@ def test_adhoc_validator():
     with pytest.raises(ValidationError) as exc_info:
         test_adt.foo("baz")
 
-    assert exc_info.value.expected == "foo or bar"
-    assert exc_info.value.actual == "baz"
+    assert exc_info.value.expected == Literal["foo", "bar"]
+    assert exc_info.value.actual == str
 
 
 def test_string_subset():
@@ -135,7 +135,7 @@ def test_custom_list():
     def _valid_name(name):
         if name in ("foo", "bar"):
             return name
-        raise ValidationError("foo or bar", str)
+        raise ValidationError(Literal["foo", "bar"], str)
 
     test_adt = asdl_adt.ADT(
         "module test_adt { foo = ( name* x ) }", ext_types={"name": _valid_name}
@@ -152,7 +152,7 @@ def test_custom_list():
     with pytest.raises(ValidationError) as exc_info:
         test_adt.foo(["baz"])
 
-    assert exc_info.value.expected == List["foo or bar"]
+    assert exc_info.value.expected == List[Literal["foo", "bar"]]
     assert exc_info.value.actual == List[str]
 
 
