@@ -15,8 +15,8 @@ def test_memoization(memo_grammar):
     assert memo_grammar.memo_prod(3, 4) is not memo_grammar.memo_prod(3, 5)
 
     assert memo_grammar.A() is memo_grammar.A()
-    assert memo_grammar.B(3) is memo_grammar.B(3)
-    assert memo_grammar.B(3) is not memo_grammar.B(4)
+    assert memo_grammar.B(3, 4) is memo_grammar.B(3, 4)
+    assert memo_grammar.B(3, 4) is not memo_grammar.B(4, 4)
 
     assert memo_grammar.normal_prod(3, 4) is not memo_grammar.normal_prod(3, 4)
     assert memo_grammar.normal_prod(3, 4) == memo_grammar.normal_prod(3, 4)

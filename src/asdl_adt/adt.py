@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 from collections import OrderedDict
 from functools import cache
 from types import ModuleType
-from typing import Type, Any, Mapping, Optional, Collection
+from typing import Type, Any, Mapping, Optional, Collection, Sequence
 
 import asdl
 import attrs
@@ -34,12 +34,6 @@ def _make_validator(typ: Type[Any], seq: bool, opt: bool):
         raise TypeError(f"expected: {expected}, actual: {actual}")
 
     return staticmethod(validate)
-
-
-@attrs.frozen
-class _AsdlAdtBase(ABC):
-    def update(self, **kwargs):
-        return attrs.evolve(self, **kwargs)
 
 
 class _BuildClasses(asdl.VisitorBase):
@@ -70,24 +64,25 @@ class _BuildClasses(asdl.VisitorBase):
     @staticmethod
     def _make_init(fields: Optional[OrderedDict[str, Any]]):
         """
-        Make an __init__ method that can be injected into a class. Must use exec
-        because dynamic Python functions cannot have named arguments.
+        Make an __init__ method that can be injected into a class.
         """
 
         if fields is None:
             return abstractmethod(_no_init)
 
         globals_dict = {}
-        init_lines = []
+        body = []
 
         for name, validator in fields.items():
             if validator:
                 globals_dict[f"_validate_{name}"] = validator
-                init_lines.append(f"_validate_{name}({name})")
+                body.append(f"_validate_{name}({name})")
 
-            init_lines.append(f"object.__setattr__(self, '{name}', {name})")
+            body.append(f"object.__setattr__(self, '{name}', {name})")
 
-        init_lines = init_lines or ["pass"]
+        body = body or ["pass"]
+
+        # exec required because Python functions can't have dynamically named arguments.
         exec(  # pylint: disable=W0122
             textwrap.dedent(
                 """
@@ -96,16 +91,31 @@ class _BuildClasses(asdl.VisitorBase):
                 """
             ).format(
                 args=", ".join(fields),
-                body=textwrap.indent("\n".join(init_lines), "    "),
+                body=textwrap.indent("\n".join(body), "    "),
             ),
             globals_dict,
         )
 
         return globals_dict["__init__"]
 
+    def _make_update(self, fields: Sequence[str]):
+        body = []
+        for field in fields:
+            body.append(f'{field} = kwargs.get("{field}", self.{field})')
+        body.append(f'return self.__class__({", ".join(fields)})')
+
+        result = {}
+        update_source = textwrap.dedent(
+            """
+            def update(self, **kwargs):
+            {body}
+            """
+        ).format(body=textwrap.indent("\n".join(body), "    "))
+        exec(update_source, result)
+        return result["update"]
+
     def _maybe_memoize(self, typ: type):
         if typ.__name__ in self._memoize:
-
             @cache
             def new_fn(inner_cls, *_, **__):
                 return super(typ, inner_cls).__new__(inner_cls)
@@ -113,7 +123,7 @@ class _BuildClasses(asdl.VisitorBase):
             typ.__new__ = new_fn
 
     def _make_class(self, name: str, base: type, fields, **kwargs):
-        return attrs.frozen(
+        cls = attrs.frozen(
             type(
                 name,
                 (base,),
@@ -121,10 +131,13 @@ class _BuildClasses(asdl.VisitorBase):
                     "__init__": self._make_init(fields),
                     "__qualname__": f"{self.module.__name__}.{name}",
                     "__annotations__": {f: None for f in (fields or ())},
+                    "update": self._make_update(fields or ()),
                     **kwargs,
                 },
             )
         )
+        self._maybe_memoize(cls)
+        return cls
 
     def _make_base_type(self, typ: asdl.Type) -> type:
         if isinstance(typ.value, asdl.Product):
@@ -134,11 +147,7 @@ class _BuildClasses(asdl.VisitorBase):
         else:
             fields = {}
 
-        base_type = self._make_class(
-            typ.name, _AsdlAdtBase, None, __annotations__=fields
-        )
-        self._maybe_memoize(base_type)
-        return base_type
+        return self._make_class(typ.name, ABC, None, __annotations__=fields)
 
     # noinspection PyPep8Naming
     # pylint: disable=invalid-name
@@ -170,6 +179,7 @@ class _BuildClasses(asdl.VisitorBase):
             self.visit(f, fields)
 
         base_type.__init__ = self._make_init(fields)
+        base_type.update = self._make_update(fields)
         abc.update_abstractmethods(base_type)
 
     # noinspection PyPep8Naming
@@ -186,7 +196,6 @@ class _BuildClasses(asdl.VisitorBase):
             self.visit(f, fields)
 
         ctor_type = self._make_class(cons.name, base_type, fields)
-        self._maybe_memoize(ctor_type)
         setattr(self.module, cons.name, ctor_type)
 
     # noinspection PyPep8Naming

@@ -36,7 +36,7 @@ def memo_grammar():
             memo_prod = ( int x, int y )
 
             memo_sum = A()
-                     | B( int val )
+                     | B( int x, int y )
 
             normal_prod = ( int x, int y )
             normal_sum = C()
