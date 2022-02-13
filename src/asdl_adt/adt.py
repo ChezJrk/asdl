@@ -117,58 +117,35 @@ class _BuildClasses(asdl.VisitorBase):
     def _make_cached_new(cls, fields):
         new_function = _BuildClasses._make_function(
             "__new__",
-            ['cls'] + list(fields),
+            ["cls"] + list(fields),
             ["return super(typ, cls).__new__(cls)"],
             typ=cls,
         )
         return _normalize(cache(new_function))
 
-    def _make_class(
-        self,
-        *,
-        name: str,
-        base: type,
-        fields: List[str],
-        init: Optional[Any],
-        **kwargs,
-    ):
-        init = {"__init__": init} if init else {}
-        cls = attrs.frozen(
-            type(
-                name,
-                (base,),
-                {
-                    **init,
-                    "__qualname__": f"{self.module.__name__}.{name}",
-                    "__annotations__": {f: None for f in fields},
-                    **kwargs,
-                },
-            )
-        )
+    def _make_class(self, name, base, fields, init=None, **kwargs):
+        type_dict = {"__init__": init} if init else {}
+        type_dict["__qualname__"] = f"{self.module.__name__}.{name}"
+        type_dict["__annotations__"] = {f: None for f in fields}
+        type_dict.update(kwargs)
+        cls = attrs.frozen(init=False)(type(name, (base,), type_dict))
         if cls.__name__ in self._memoize:
             cls.__new__ = self._make_cached_new(cls, fields)
         return cls
 
     def _make_base_type(self, typ: asdl.Type) -> type:
-        if isinstance(typ.value, asdl.Product):
-            return self._make_class(
-                name=typ.name,
-                base=_AsdlAdtBase,
-                fields=[f.name for f in typ.value.fields],
-                # The "base" type is the actual, final type for products, but the
-                # init function cannot create validators until all the types have
-                # been created, so skip creating it for now (will be attached in
-                # visitProduct).
-                init=None,
-            )
-        else:
-            # Sum type superclass
-            return self._make_class(
-                name=typ.name,
-                base=_AsdlAdtBase,
-                fields=[],
-                init=abstractmethod(_no_init),
-            )
+        # The "base" type is the actual, final type for products, but the init
+        # function cannot create validators until all the types have been created,
+        # so skip creating it for now (will be attached in visitProduct).
+        return self._make_class(
+            name=typ.name,
+            base=_AsdlAdtBase,
+            fields=(
+                [f.name for f in typ.value.fields]
+                if isinstance(typ.value, asdl.Product)
+                else []
+            ),
+        )
 
     # noinspection PyPep8Naming
     # pylint: disable=invalid-name
