@@ -31,3 +31,10 @@ def test_memoization(memo_grammar):
 
     assert memo_grammar.F() is not memo_grammar.F()
     assert memo_grammar.F() == memo_grammar.F()
+
+
+def test_memoized_kwargs(memo_grammar):
+    """
+    Test that the caching mechanism correctly handles keyword arguments
+    """
+    assert memo_grammar.B(3, 4) is memo_grammar.B(x=3, y=4)
