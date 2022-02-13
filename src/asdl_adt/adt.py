@@ -1,208 +1,192 @@
 """
 This is the main parsing and class metaprogramming module in ASDL-ADT.
 """
-
-import sys
+import abc
 import textwrap
+from abc import ABC, abstractmethod
+from collections import OrderedDict
 from functools import cache
 from types import ModuleType
+from typing import Type, Any, Mapping, Optional, Collection
 
 import asdl
+import attrs
 
 
-def _build_superclasses(asdl_mod):
-    classes = {}
+def _make_validator(typ: Type[Any], seq: bool, opt: bool):
+    def validate(x):
+        if (
+            (opt and x is None)
+            or (not seq and isinstance(x, typ))
+            or (seq and isinstance(x, list) and all(isinstance(y, typ) for y in x))
+        ):
+            return
 
-    def create_invalid_init():
-        def invalid_init(self):
-            assert False, f"{type(self).__name__} should never be instantiated"
+        expected = typ.__qualname__
+        if seq:
+            expected = f"List[{expected}]"
+        actual = type(x).__qualname__
 
-        return invalid_init
+        raise TypeError(f"expected: {expected}, actual: {actual}")
 
-    for name, definition in asdl_mod.types.items():
-        if isinstance(definition, asdl.Sum):
-            classes[name] = type(name, (), {"__init__": create_invalid_init()})
-        elif isinstance(definition, asdl.Product):
-            classes[name] = type(name, (), {})
-    return classes
-
-
-_builtin_checks = {
-    "string": lambda x: isinstance(x, str),
-    "int": lambda x: isinstance(x, int),
-    "object": lambda x: x is not None,
-    "float": lambda x: isinstance(x, float),
-    "bool": lambda x: isinstance(x, bool),
-}
+    return staticmethod(validate)
 
 
-def _build_checks(superclasses, ext_checks):
-    checks = _builtin_checks.copy()
+class BuildClasses(asdl.VisitorBase):
+    """A visitor that constructs an IR module from a parsed ASDL tree."""
 
-    def make_check(superclass):
-        return lambda x: isinstance(x, superclass)
+    _builtin_types = {
+        "bool": bool,
+        "float": float,
+        "int": int,
+        "object": object,
+        "string": str,
+    }
 
-    for name in ext_checks:
-        checks[name] = ext_checks[name]
-    for name in superclasses:
-        assert name not in checks, f"Name conflict for type '{name}'"
-        checks[name] = make_check(superclasses[name])
-    return checks
+    def __init__(self, ext_types, memoize):
+        super().__init__()
+        self.module = None
+        self._memoize = memoize
+        self._type_map = {
+            **BuildClasses._builtin_types,
+            **ext_types,
+        }
+        self._base_types = {}
 
+    def _attach_init(self, base_type: Type[ABC], fields: OrderedDict[str, Any]):
+        """
+        Make an __init__ method that can be injected into a class. Must use exec
+        because dynamic Python functions cannot have named arguments.
+        """
 
-def _build_classes(asdl_mod, ext_checks):
-    superclasses = _build_superclasses(asdl_mod)
-    check_funcs = _build_checks(superclasses, ext_checks)
+        globals_dict = {}
+        init_lines = []
 
-    mod = ModuleType(asdl_mod.name)
-    # TODO: Investigate how to make generated modules fully native/safe/reliable
-    sys.modules[asdl_mod.name] = mod  # register the new module
+        for name, validator in fields.items():
+            if validator:
+                globals_dict[f"_validate_{name}"] = validator
+                init_lines.append(f"_validate_{name}({name})")
 
-    err_cls = type(asdl_mod.name + "Err", (Exception,), {})
+            init_lines.append(f"object.__setattr__(self, '{name}', {name})")
 
-    def basic_check(i, name, argname, typ, indent="    "):
-        typname = typ
-        if typ in superclasses:
-            typname = asdl_mod.name + "." + typ
-        err_msg = f'expected arg {i} "{name}" to be type "{typname}"'
-        return (
-            f"{indent}if not CHK['{typ}']({argname}):\n"
-            f"{indent}    raise TypeError('{err_msg}')"
+        init_lines = init_lines or ["pass"]
+        exec(
+            textwrap.dedent(
+                """
+                def __init__(self, {args}):
+                {body}
+                """
+            ).format(
+                args=", ".join(fields),
+                body=textwrap.indent("\n".join(init_lines), "    "),
+            ),
+            globals_dict,
         )
 
-    def opt_check(i, name, argname, typ, indent="    "):
-        subidnt = indent + "    "
-        return (
-            f"{indent}if {argname} is not None:\n"
-            f"{basic_check(i, name, argname, typ, subidnt)}"
+        base_type.__init__ = globals_dict["__init__"]
+        abc.update_abstractmethods(base_type)
+
+    def _maybe_memoize(self, typ: Type[ABC]):
+        if typ.__name__ in self._memoize:
+
+            @cache
+            def new_fn(inner_cls, *_, **__):
+                return super(typ, inner_cls).__new__(inner_cls)
+
+            typ.__new__ = new_fn
+
+    def _make_base_type(self, typ: asdl.Type) -> Type[ABC]:
+        if isinstance(typ.value, asdl.Product):
+            # The "base" type is the actual, final type for products, so apply
+            # __slots__ now, to the "base" type, rather than going through a
+            # dummy subclass.
+            slots = tuple(field.name for field in typ.value.fields)
+        else:
+            slots = tuple()
+
+        @attrs.define(frozen=True, slots=False)
+        class BaseType(ABC):
+            __slots__ = slots
+
+            @abstractmethod
+            def __init__(self):
+                pass
+
+            def update(self, **kwargs):
+                cls = self.__class__
+                for arg in cls.__slots__:
+                    if arg not in kwargs:
+                        kwargs[arg] = getattr(self, arg)
+
+                return cls(**kwargs)
+
+        BaseType.__name__ = typ.name
+        BaseType.__qualname__ = f"{self.module.__name__}.{typ.name}"
+        self._maybe_memoize(BaseType)
+        return BaseType
+
+    # noinspection PyPep8Naming
+    def visitModule(self, mod: asdl.Module):
+        self.module = ModuleType(mod.name)
+
+        # Collect top-level names as stub/abstract classes
+        for dfn in mod.dfns:
+            base_type = self._make_base_type(dfn)
+            setattr(self.module, dfn.name, base_type)
+            self._base_types[dfn.name] = base_type
+            self._type_map[dfn.name] = base_type
+
+        # Fill in classes
+        for dfn in mod.dfns:
+            self.visit(dfn)
+
+    # noinspection PyPep8Naming
+    def visitType(self, typ: asdl.Type):
+        # Forward to Sum or Product
+        self.visit(typ.value, self._base_types[typ.name])
+
+    # noinspection PyPep8Naming
+    def visitProduct(self, prod: asdl.Product, base_type: Type[ABC]):
+        fields = OrderedDict()
+        for f in prod.fields:
+            self.visit(f, fields)
+
+        self._attach_init(base_type, fields)
+
+    # noinspection PyPep8Naming
+    def visitSum(self, sum_node: asdl.Sum, base_type: Type[ABC]):
+        for t in sum_node.types:
+            self.visit(t, base_type)
+
+    # noinspection PyPep8Naming
+    def visitConstructor(self, cons: asdl.Constructor, base_type: Type[ABC]):
+        fields = OrderedDict()
+        for f in cons.fields:
+            self.visit(f, fields)
+
+        @attrs.frozen(frozen=True, slots=False)
+        class CtorType(base_type):
+            __slots__ = tuple(fields)
+            pass
+
+        CtorType.__name__ = cons.name
+        CtorType.__qualname__ = f"{self.module.__name__}.{cons.name}"
+        self._maybe_memoize(CtorType)
+        self._attach_init(CtorType, fields)
+        setattr(self.module, cons.name, CtorType)
+
+    # noinspection PyPep8Naming
+    def visitField(self, field: asdl.Field, fields: OrderedDict):
+        fields[field.name] = _make_validator(
+            self._type_map[field.type], field.seq, field.opt
         )
 
-    def seq_check(i, name, argname, typ, indent="    "):
-        return (
-            f"{indent}if not type({argname}) is list:\n"
-            f"{indent}    raise TypeError('expected arg {i} \"{name}\" to be a list')\n"
-            f"{indent}for j,e in enumerate({argname}):\n"
-            f"{basic_check(i, name + '[]', argname + '[j]', typ, indent + '    ')}"
-        )
 
-    def create_initfn(cls_name, fields):
-        nameargs = ", ".join([f.name for i, f in enumerate(fields)])
-        argstr = ", ".join([f"arg_{i}" for i, f in enumerate(fields)])
-        checks = "\n".join(
-            [
-                seq_check(i, f.name, f"arg_{i}", f.type)
-                if f.seq
-                else (
-                    opt_check(i, f.name, f"arg_{i}", f.type)
-                    if f.opt
-                    else basic_check(i, f.name, f"arg_{i}", f.type)
-                )
-                for i, f in enumerate(fields)
-            ]
-        )
-        assign = "\n    ".join(
-            [f"self.{f.name} = arg_{i}" for i, f in enumerate(fields)]
-        )
-        if not fields:
-            checks = "    pass"
-            assign = "pass"
-
-        exec_out = {"Err": err_cls, "CHK": check_funcs}
-        exec_str = (
-            f"def {cls_name}_init_inner(self,{argstr}):\n"
-            f"{checks}\n"
-            f"    {assign}\n"
-            f"def {cls_name}_init(self,{nameargs}):\n"
-            f"    {cls_name}_init_inner(self,{nameargs})"
-        )
-        # un-comment this line to see what's
-        # really going on
-        # print(exec_str)
-        exec(exec_str, exec_out)
-        return exec_out[cls_name + "_init"]
-
-    def create_reprfn(cls_name, fields):
-        prints = ",".join([f"{f.name}={{repr(self.{f.name})}}" for f in fields])
-        exec_out = {"Err": err_cls}
-        exec_str = f"def {cls_name}_repr(self):" f'\n    return f"{cls_name}({prints})"'
-        # un-comment this line to see what's
-        # really going on
-        # print(exec_str)
-        exec(exec_str, exec_out)
-        return exec_out[cls_name + "_repr"]
-
-    def create_eqfn(cls_name, fields):
-        compares = " and ".join(
-            ["type(self) is type(o)"]
-            + [f"(self.{f.name} == o.{f.name})" for f in fields]
-        )
-        exec_out = {"Err": err_cls}
-        exec_str = f"def {cls_name}_eq(self,o):" f"\n    return {compares}"
-        # un-comment this line to see what's
-        # really going on
-        # print(exec_str)
-        exec(exec_str, exec_out)
-        return exec_out[cls_name + "_eq"]
-
-    def create_hashfn(cls_name, fields):
-        hashes = ",".join(["type(self)"] + [f"self.{f.name}" for f in fields])
-        exec_out = {"Err": err_cls}
-        exec_str = f"def {cls_name}_hash(self):" f"\n    return hash(({hashes}))"
-        # un-comment this line to see what's
-        # really going on
-        # print(exec_str)
-        exec(exec_str, exec_out)
-        return exec_out[cls_name + "_hash"]
-
-    def create_prod(cls_name, prod_node):
-        cls = superclasses[cls_name]
-        fields = prod_node.fields
-        cls.__init__ = create_initfn(cls_name, fields)
-        cls.__repr__ = create_reprfn(cls_name, fields)
-        cls.__eq__ = create_eqfn(cls_name, fields)
-        cls.__hash__ = create_hashfn(cls_name, fields)
-        cls.__slots__ = tuple(f.name for f in fields)
-        cls.__match_args__ = tuple(f.name for f in fields)
-        return cls
-
-    def create_sum_constructor(cls_name, supercls, fields):
-        return type(
-            cls_name,
-            (supercls,),
-            {
-                "__init__": create_initfn(cls_name, fields),
-                "__repr__": create_reprfn(cls_name, fields),
-                "__eq__": create_eqfn(cls_name, fields),
-                "__hash__": create_hashfn(cls_name, fields),
-                "__slots__": tuple(f.name for f in fields),
-                "__match_args__": tuple(f.name for f in fields),
-            },
-        )
-
-    def create_sum(type_name, sum_node):
-        cls = superclasses[type_name]
-        attrs = sum_node.attributes
-        for sum_case in sum_node.types:
-            ctor = create_sum_constructor(sum_case.name, cls, sum_case.fields + attrs)
-            assert not hasattr(
-                mod, sum_case.name
-            ), f"name '{sum_case.name}' conflict in module '{mod}'"
-            setattr(cls, sum_case.name, ctor)
-            setattr(mod, sum_case.name, ctor)
-        return cls
-
-    for name, definition in asdl_mod.types.items():
-        if isinstance(definition, asdl.Product):
-            setattr(mod, name, create_prod(name, definition))
-        elif isinstance(definition, asdl.Sum):
-            setattr(mod, name, create_sum(name, definition))
-        else:  # pragma nocover - very defensive
-            assert False, "unexpected kind of asdl type"
-
-    return mod
-
-
-def ADT(asdl_str, ext_checks=None):
+def ADT(
+    asdl_str: str,
+    ext_checks: Optional[Mapping[str, type]] = None,
+    memoize: Optional[Collection[str]] = None,
+):
     """Function that converts an ASDL grammar into a Python Module.
 
     The returned module will contain one class for every ASDL type
@@ -228,15 +212,17 @@ def ADT(asdl_str, ext_checks=None):
     =================
     asdl_str : str
         The ASDL definition string
-    ext_checks : dict of functions, optional
-        Type-checking functions for all external (undefined) types
-        that are not "built-in".
-        "built-in" types, and corresponding Python types are
-        *   'string' - str
-        *   'int' - int
-        *   'float' - float
+    ext_checks : Optional[Mapping[str, type]]
+        A mapping of custom type names to Python types. Used to create validators for
+        the __init__ method of generated classes. Several built-in types are implied,
+        with the following corresponding Python types:
         *   'bool' - bool
+        *   'float' - float
+        *   'int' - int
         *   'object' - (anything except None)
+        *   'string' - str
+    memoize : Optional[Collection[str]]
+        collection of constructor names to memoize, optional
 
     Returns
     =================
@@ -258,13 +244,16 @@ def ADT(asdl_str, ext_checks=None):
         })
     """
     ext_checks = ext_checks or {}
+    memoize = memoize or set()
 
     asdl_ast = asdl.ASDLParser().parse(asdl_str)
-    mod = _build_classes(asdl_ast, ext_checks)
+    builder = BuildClasses(ext_checks, memoize)
+    builder.visit(asdl_ast)
+
+    mod = builder.module
+
     # cache values in case we might want them
-    mod._ext_checks = ext_checks
     mod._ast = asdl_ast
-    mod._defstr = asdl_str
 
     mod.__doc__ = (
         textwrap.dedent(
@@ -273,45 +262,6 @@ def ADT(asdl_str, ext_checks=None):
             Original ASDL description:
             """
         )
-        + asdl_str
+        + textwrap.dedent(asdl_str)
     )
     return mod
-
-
-def memo(module, whitelist):
-    """Function that wraps ADT class constructors with memoization.
-
-    This function should be called right after construction of an ADT
-    module.
-
-    Parameters
-    =================
-    module : ADT module
-        Created by asdl_adt.ADT
-    whitelist : list of strings
-        Names of every constructor in `mod` that will be memoized.
-
-    Returns
-    =================
-    Nothing
-    """
-
-    def cache_dunder_new(cls_name):
-        cls = getattr(module, cls_name)
-
-        @cache
-        def new_fn(inner_cls, *_, **__):
-            return super(cls, inner_cls).__new__(inner_cls)
-
-        cls.__new__ = new_fn
-
-    for name, definition in module._ast.types.items():
-        if name not in whitelist:
-            continue
-        if isinstance(definition, asdl.Product):
-            cache_dunder_new(name)
-        elif isinstance(definition, asdl.Sum):
-            for constructor in definition.types:
-                cache_dunder_new(constructor.name)
-        else:  # pragma: nocover - very defensive
-            assert False, "unexpected kind of asdl type"

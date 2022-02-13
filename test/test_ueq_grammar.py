@@ -44,14 +44,14 @@ def fixture_ueq_grammar():
                  | Scale( int coeff, expr e )
         }
         """,
-        {"sym": lambda x: isinstance(x, Sym)},
+        {"sym": Sym},
     )
 
 
 def _public_names(obj):
     # If a class has __slots__, it does not have a __dict__.
     # Old Python versions do nothing special with __slots__.
-    fields = obj.__dict__ or getattr(obj, "__slots__", {})
+    fields = getattr(obj, "__dict__", getattr(obj, "__slots__", {}))
     return set(filter(lambda x: not x.startswith("_"), fields))
 
 
@@ -96,7 +96,21 @@ def test_module_function_signatures(ueq_grammar):
     Test that generated constructors have the expected arguments in the expected order
     """
 
-    def check_args(cls, expected_args):
+    test_cases = [
+        (ueq_grammar.problem, ["self", "holes", "knowns", "preds"]),
+        (ueq_grammar.pred, ["self"]),
+        (ueq_grammar.Conj, ["self", "preds"]),
+        (ueq_grammar.Disj, ["self", "preds"]),
+        (ueq_grammar.Cases, ["self", "case_var", "cases"]),
+        (ueq_grammar.Eq, ["self", "lhs", "rhs"]),
+        (ueq_grammar.expr, ["self"]),
+        (ueq_grammar.Const, ["self", "val"]),
+        (ueq_grammar.Var, ["self", "name"]),
+        (ueq_grammar.Add, ["self", "lhs", "rhs"]),
+        (ueq_grammar.Scale, ["self", "coeff", "e"]),
+    ]
+
+    for (cls, expected_args) in test_cases:
         real_args = inspect.getfullargspec(cls.__init__)
         assert real_args.args == expected_args
         assert real_args.varargs is None
@@ -106,20 +120,6 @@ def test_module_function_signatures(ueq_grammar):
         assert real_args.kwonlydefaults is None
         assert real_args.annotations == {}
 
-    check_args(ueq_grammar.problem, ["self", "holes", "knowns", "preds"])
-
-    check_args(ueq_grammar.pred, ["self"])
-    check_args(ueq_grammar.Conj, ["self", "preds"])
-    check_args(ueq_grammar.Disj, ["self", "preds"])
-    check_args(ueq_grammar.Cases, ["self", "case_var", "cases"])
-    check_args(ueq_grammar.Eq, ["self", "lhs", "rhs"])
-
-    check_args(ueq_grammar.expr, ["self"])
-    check_args(ueq_grammar.Const, ["self", "val"])
-    check_args(ueq_grammar.Var, ["self", "name"])
-    check_args(ueq_grammar.Add, ["self", "lhs", "rhs"])
-    check_args(ueq_grammar.Scale, ["self", "coeff", "e"])
-
 
 def test_module_abstract_classes(ueq_grammar):
     """
@@ -127,11 +127,20 @@ def test_module_abstract_classes(ueq_grammar):
     """
 
     # TODO: with pytest.raises(TypeError, match='Can\'t instantiate abstract class'):
-    with pytest.raises(AssertionError, match=r"pred should never be instantiated"):
+    abc_err = r"Can't instantiate abstract class \w+ with abstract method __init__"
+    with pytest.raises(TypeError, match=abc_err):
         ueq_grammar.pred()
 
-    with pytest.raises(AssertionError, match=r"expr should never be instantiated"):
+    with pytest.raises(TypeError, match=abc_err):
         ueq_grammar.expr()
+
+
+def test_create_empty_problem(ueq_grammar):
+    problem = ueq_grammar.problem([], [], [])
+    assert isinstance(problem, ueq_grammar.problem)
+    assert problem.holes == []
+    assert problem.preds == []
+    assert problem.knowns == []
 
 
 def test_create_problem(ueq_grammar):
@@ -212,10 +221,8 @@ def test_invalid_arg_type_throws(ueq_grammar):
     Test that generated data type constructors validate the types of their arguments.
     """
 
-    with pytest.raises(TypeError, match=r'expected arg 0 "name" to be type "sym"'):
+    with pytest.raises(TypeError, match=r"expected: Sym, actual: str"):
         ueq_grammar.Var("not-a-sym")
 
-    with pytest.raises(
-        TypeError, match=r'expected arg 0 "preds\[\]" to be type "UEq\.pred"'
-    ):
+    with pytest.raises(TypeError, match=r"expected: List\[UEq\.pred\], actual: list"):
         ueq_grammar.Conj([3])

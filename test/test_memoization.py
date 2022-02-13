@@ -15,7 +15,7 @@ def fixture_memo():
     A test grammar with fully memoized types, partially memoized types, and
     non-memoized types.
     """
-    memo_grammar = asdl_adt.ADT(
+    return asdl_adt.ADT(
         """
         module memo {
             memo_prod = ( int x, int y )
@@ -30,9 +30,8 @@ def fixture_memo():
             partial_sum = E( int val ) | F()
         }
         """,
+        memoize={"memo_prod", "A", "B", "E"},
     )
-    asdl_adt.memo(memo_grammar, ["memo_prod", "A", "B", "E"])
-    return memo_grammar
 
 
 def test_memoization(memo):

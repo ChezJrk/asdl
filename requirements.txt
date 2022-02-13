@@ -1,5 +1,6 @@
 # Project dependencies
 asdl==0.1.5
+attrs==21.4.0
 
 # Development dependencies
 black==22.1.0
