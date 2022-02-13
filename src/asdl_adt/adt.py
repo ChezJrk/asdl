@@ -1,6 +1,8 @@
 """
 This is the main parsing and class metaprogramming module in ASDL-ADT.
 """
+from __future__ import annotations
+
 import functools
 import inspect
 import textwrap
