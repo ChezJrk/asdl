@@ -39,9 +39,9 @@ def test_has_hash(simple_grammar):
     obj_a = simple_grammar.A(3)
     obj_b = simple_grammar.B(3.0)
 
-    print(hash(obj_prod))
-    print(hash(obj_a))
-    print(hash(obj_b))
+    assert isinstance(hash(obj_prod), int)
+    assert isinstance(hash(obj_a), int)
+    assert isinstance(hash(obj_b), int)
 
 
 def test_hash_is_different(simple_grammar):
