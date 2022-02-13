@@ -85,55 +85,43 @@ class _BuildClasses(asdl.VisitorBase):
         self._base_types = {}
 
     @staticmethod
+    def _make_function(name: str, args: List[str], body: List[str], **context):
+        body = body or ["pass"]
+        body = textwrap.indent("\n".join(body), " " * 4)
+        source = f'def {name}({", ".join(args)}):\n' + body
+        # exec required because Python functions can't have dynamically named arguments.
+        exec(source, context)  # pylint: disable=W0122
+        return context[name]
+
+    @staticmethod
     def _make_init(fields: List[str], validators: List[Any]):
         """
         Make an __init__ method that can be injected into a class.
         """
-
         assert len(fields) == len(validators)
 
-        globals_dict = {}
+        context = {}
         body = []
 
         for name, validator in zip(fields, validators):
             if validator:
-                globals_dict[f"_validate_{name}"] = validator
+                context[f"_validate_{name}"] = validator
                 body.append(f"_validate_{name}({name})")
 
             body.append(f"object.__setattr__(self, '{name}', {name})")
 
-        body = body or ["pass"]
-
-        # exec required because Python functions can't have dynamically named arguments.
-        exec(  # pylint: disable=W0122
-            textwrap.dedent(
-                """
-                def __init__(self, {args}):
-                {body}
-                """
-            ).format(
-                args=", ".join(fields),
-                body=textwrap.indent("\n".join(body), "    "),
-            ),
-            globals_dict,
-        )
-
-        return globals_dict["__init__"]
+        args = ["self"] + list(fields)
+        return _BuildClasses._make_function("__init__", args, body, **context)
 
     @staticmethod
     def _make_cached_new(cls, fields):
-        result = {"typ": cls}
-        exec(
-            textwrap.dedent(
-                f"""
-                def __new__(cls, {", ".join(fields)}):
-                    return super(typ, cls).__new__(cls)
-                """
-            ),
-            result,
+        new_function = _BuildClasses._make_function(
+            "__new__",
+            ['cls'] + list(fields),
+            ["return super(typ, cls).__new__(cls)"],
+            typ=cls,
         )
-        newfn = _normalize(cache(result["__new__"]))
-        return newfn
+        return _normalize(cache(new_function))
 
     def _make_class(
         self,
