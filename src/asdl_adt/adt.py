@@ -54,8 +54,8 @@ def _make_validator(typ: Type[Any], seq: bool, opt: bool):
 # pylint: disable=too-few-public-methods
 class _AsdlAdtBase(ABC):
     @abstractmethod
-    def __init__(self):
-        pass
+    def __init__(self):  # pragma: no cover (unreachable)
+        assert False, "Should be unreachable."
 
     def update(self, **kwargs):
         """
