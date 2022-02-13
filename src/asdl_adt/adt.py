@@ -18,18 +18,18 @@ def _no_init(self):
 
 
 def _make_validator(typ: Type[Any], seq: bool, opt: bool):
-    def validate(x):
+    def validate(val):
         if (
-            (opt and x is None)
-            or (not seq and isinstance(x, typ))
-            or (seq and isinstance(x, list) and all(isinstance(y, typ) for y in x))
+            (opt and val is None)
+            or (not seq and isinstance(val, typ))
+            or (seq and isinstance(val, list) and all(isinstance(y, typ) for y in val))
         ):
             return
 
         expected = typ.__qualname__
         if seq:
             expected = f"List[{expected}]"
-        actual = type(x).__qualname__
+        actual = type(val).__qualname__
 
         raise TypeError(f"expected: {expected}, actual: {actual}")
 
@@ -42,7 +42,7 @@ class _AsdlAdtBase(ABC):
         return attrs.evolve(self, **kwargs)
 
 
-class BuildClasses(asdl.VisitorBase):
+class _BuildClasses(asdl.VisitorBase):
     """A visitor that constructs an IR module from a parsed ASDL tree."""
 
     _builtin_types = {
@@ -62,12 +62,13 @@ class BuildClasses(asdl.VisitorBase):
         self.module = None
         self._memoize = memoize or set()
         self._type_map = {
-            **BuildClasses._builtin_types,
+            **_BuildClasses._builtin_types,
             **(ext_types or {}),
         }
         self._base_types = {}
 
-    def _make_init(self, fields: Optional[OrderedDict[str, Any]]):
+    @staticmethod
+    def _make_init(fields: Optional[OrderedDict[str, Any]]):
         """
         Make an __init__ method that can be injected into a class. Must use exec
         because dynamic Python functions cannot have named arguments.
@@ -87,7 +88,7 @@ class BuildClasses(asdl.VisitorBase):
             init_lines.append(f"object.__setattr__(self, '{name}', {name})")
 
         init_lines = init_lines or ["pass"]
-        exec(
+        exec(  # pylint: disable=W0122
             textwrap.dedent(
                 """
                 def __init__(self, {args}):
@@ -140,6 +141,7 @@ class BuildClasses(asdl.VisitorBase):
         return base_type
 
     # noinspection PyPep8Naming
+    # pylint: disable=invalid-name
     def visitModule(self, mod: asdl.Module):
         self.module = ModuleType(mod.name)
 
@@ -155,11 +157,13 @@ class BuildClasses(asdl.VisitorBase):
             self.visit(dfn)
 
     # noinspection PyPep8Naming
+    # pylint: disable=invalid-name
     def visitType(self, typ: asdl.Type):
         # Forward to Sum or Product
         self.visit(typ.value, self._base_types[typ.name])
 
     # noinspection PyPep8Naming
+    # pylint: disable=invalid-name
     def visitProduct(self, prod: asdl.Product, base_type: Type[ABC]):
         fields = OrderedDict()
         for f in prod.fields:
@@ -169,11 +173,13 @@ class BuildClasses(asdl.VisitorBase):
         abc.update_abstractmethods(base_type)
 
     # noinspection PyPep8Naming
+    # pylint: disable=invalid-name
     def visitSum(self, sum_node: asdl.Sum, base_type: Type[ABC]):
         for t in sum_node.types:
             self.visit(t, base_type)
 
     # noinspection PyPep8Naming
+    # pylint: disable=invalid-name
     def visitConstructor(self, cons: asdl.Constructor, base_type: Type[ABC]):
         fields = OrderedDict()
         for f in cons.fields:
@@ -184,6 +190,7 @@ class BuildClasses(asdl.VisitorBase):
         setattr(self.module, cons.name, ctor_type)
 
     # noinspection PyPep8Naming
+    # pylint: disable=invalid-name
     def visitField(self, field: asdl.Field, fields: OrderedDict):
         fields[field.name] = _make_validator(
             self._type_map[field.type], field.seq, field.opt
@@ -253,7 +260,7 @@ def ADT(
     """
     asdl_ast = asdl.ASDLParser().parse(asdl_str)
 
-    builder = BuildClasses(ext_types, memoize)
+    builder = _BuildClasses(ext_types, memoize)
     builder.visit(asdl_ast)
     mod = builder.module
 

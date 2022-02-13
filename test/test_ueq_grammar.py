@@ -136,6 +136,9 @@ def test_module_abstract_classes(ueq_grammar):
 
 
 def test_create_empty_problem(ueq_grammar):
+    """
+    Simple test to create a product type with empty lists.
+    """
     problem = ueq_grammar.problem([], [], [])
     assert isinstance(problem, ueq_grammar.problem)
     assert problem.holes == []

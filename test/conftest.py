@@ -1,3 +1,7 @@
+"""
+Common fixtures defining grammars that are reused across multiple tests
+"""
+
 import pytest
 
 from asdl_adt import ADT
@@ -12,7 +16,7 @@ def simple_grammar():
         """
         module UEq {
             prod = ( int x, int y )
-            sum = A( int x ) 
+            sum = A( int x )
                 | B( float y )
                 | C( int x, int y )
         }
