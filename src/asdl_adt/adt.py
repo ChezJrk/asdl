@@ -1,7 +1,6 @@
 """
 This is the main parsing and class metaprogramming module in ASDL-ADT.
 """
-import abc
 import functools
 import inspect
 import textwrap
