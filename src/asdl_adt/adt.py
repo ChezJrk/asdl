@@ -191,7 +191,9 @@ class _BuildClasses(asdl.VisitorBase):
         Creates a new data type for the current product type and adds it to the module.
         """
         base_type.__init__ = self._init_fn(self._visit_fields(prod))
-        abc.update_abstractmethods(base_type)
+        base_type.__abstractmethods__ = frozenset(
+            base_type.__abstractmethods__ - {"__init__"}
+        )
 
     # noinspection PyPep8Naming
     # pylint: disable=invalid-name
