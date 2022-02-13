@@ -17,15 +17,6 @@ def _no_init(self):
     pass
 
 
-def _update(self, **kwargs):
-    cls = self.__class__
-    for arg in cls.__slots__:
-        if arg not in kwargs:
-            kwargs[arg] = getattr(self, arg)
-
-    return cls(**kwargs)
-
-
 def _make_validator(typ: Type[Any], seq: bool, opt: bool):
     def validate(x):
         if (
@@ -45,6 +36,12 @@ def _make_validator(typ: Type[Any], seq: bool, opt: bool):
     return staticmethod(validate)
 
 
+@attrs.frozen
+class _AsdlAdtBase(ABC):
+    def update(self, **kwargs):
+        return attrs.evolve(self, **kwargs)
+
+
 class BuildClasses(asdl.VisitorBase):
     """A visitor that constructs an IR module from a parsed ASDL tree."""
 
@@ -56,21 +53,28 @@ class BuildClasses(asdl.VisitorBase):
         "string": str,
     }
 
-    def __init__(self, ext_types, memoize):
+    def __init__(
+        self,
+        ext_types: Optional[Mapping[str, type]] = None,
+        memoize: Optional[Collection[str]] = None,
+    ):
         super().__init__()
         self.module = None
-        self._memoize = memoize
+        self._memoize = memoize or set()
         self._type_map = {
             **BuildClasses._builtin_types,
-            **ext_types,
+            **(ext_types or {}),
         }
         self._base_types = {}
 
-    def _make_init(self, fields: OrderedDict[str, Any]):
+    def _make_init(self, fields: Optional[OrderedDict[str, Any]]):
         """
         Make an __init__ method that can be injected into a class. Must use exec
         because dynamic Python functions cannot have named arguments.
         """
+
+        if fields is None:
+            return abstractmethod(_no_init)
 
         globals_dict = {}
         init_lines = []
@@ -107,28 +111,31 @@ class BuildClasses(asdl.VisitorBase):
 
             typ.__new__ = new_fn
 
-    def _make_base_type(self, typ: asdl.Type) -> type:
-        if isinstance(typ.value, asdl.Product):
-            # The "base" type is the actual, final type for products, so apply
-            # __slots__ now, to the "base" type, rather than going through a
-            # dummy subclass.
-            fields = tuple(field.name for field in typ.value.fields)
-        else:
-            fields = tuple()
-
-        base_type = attrs.define(frozen=True)(
+    def _make_class(self, name: str, base: type, fields, **kwargs):
+        return attrs.frozen(
             type(
-                typ.name,
-                (ABC,),
+                name,
+                (base,),
                 {
-                    "__init__": abstractmethod(_no_init),
-                    "__annotations__": {f: None for f in fields},
-                    "__qualname__": f"{self.module.__name__}.{typ.name}",
-                    "update": _update,
+                    "__init__": self._make_init(fields),
+                    "__qualname__": f"{self.module.__name__}.{name}",
+                    "__annotations__": {f: None for f in (fields or ())},
+                    **kwargs,
                 },
             )
         )
 
+    def _make_base_type(self, typ: asdl.Type) -> type:
+        if isinstance(typ.value, asdl.Product):
+            # The "base" type is the actual, final type for products, so tell
+            # attrs which fields to create now.
+            fields = {field.name: None for field in typ.value.fields}
+        else:
+            fields = {}
+
+        base_type = self._make_class(
+            typ.name, _AsdlAdtBase, None, __annotations__=fields
+        )
         self._maybe_memoize(base_type)
         return base_type
 
@@ -172,18 +179,7 @@ class BuildClasses(asdl.VisitorBase):
         for f in cons.fields:
             self.visit(f, fields)
 
-        ctor_type = attrs.define(frozen=True)(
-            type(
-                cons.name,
-                (base_type,),
-                {
-                    "__init__": self._make_init(fields),
-                    "__qualname__": f"{self.module.__name__}.{cons.name}",
-                    "__annotations__": {f: None for f in fields},
-                },
-            )
-        )
-
+        ctor_type = self._make_class(cons.name, base_type, fields)
         self._maybe_memoize(ctor_type)
         setattr(self.module, cons.name, ctor_type)
 
@@ -196,7 +192,7 @@ class BuildClasses(asdl.VisitorBase):
 
 def ADT(
     asdl_str: str,
-    ext_checks: Optional[Mapping[str, type]] = None,
+    ext_types: Optional[Mapping[str, type]] = None,
     memoize: Optional[Collection[str]] = None,
 ):
     """Function that converts an ASDL grammar into a Python Module.
@@ -224,7 +220,7 @@ def ADT(
     =================
     asdl_str : str
         The ASDL definition string
-    ext_checks : Optional[Mapping[str, type]]
+    ext_types : Optional[Mapping[str, type]]
         A mapping of custom type names to Python types. Used to create validators for
         the __init__ method of generated classes. Several built-in types are implied,
         with the following corresponding Python types:
@@ -255,17 +251,11 @@ def ADT(
             "id" : lambda x: type(x) is str and str.isalnum(),
         })
     """
-    ext_checks = ext_checks or {}
-    memoize = memoize or set()
-
     asdl_ast = asdl.ASDLParser().parse(asdl_str)
-    builder = BuildClasses(ext_checks, memoize)
+
+    builder = BuildClasses(ext_types, memoize)
     builder.visit(asdl_ast)
-
     mod = builder.module
-
-    # cache values in case we might want them
-    mod._ast = asdl_ast
 
     mod.__doc__ = (
         textwrap.dedent(
