@@ -15,10 +15,6 @@ import asdl
 import attrs
 
 
-def _no_init(self):
-    pass
-
-
 def _normalize(func):
     sig = inspect.signature(func)
 
