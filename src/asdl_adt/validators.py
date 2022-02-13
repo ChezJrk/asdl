@@ -1,7 +1,7 @@
 """
 Common validators for custom types.
 """
-from functools import cache
+from functools import lru_cache
 from typing import Type
 
 
@@ -25,7 +25,7 @@ class ValidationError(TypeError):
         return f"expected: {expected}, actual: {actual}"
 
 
-@cache
+@lru_cache(maxsize=0)
 def instance_of(typ, *, convert=False):
     """
     Return a validator that checks if an object is an instance of the given type
@@ -44,7 +44,7 @@ def instance_of(typ, *, convert=False):
     return _validator
 
 
-@cache
+@lru_cache(maxsize=0)
 def subclass_of(typ):
     """
     Return a validator that checks if an object is a type inheriting from the given
