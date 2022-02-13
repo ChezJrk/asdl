@@ -16,42 +16,52 @@ import attrs
 
 
 def _normalize(func):
-    sig = inspect.signature(func)
+    signature = inspect.signature(func)
 
     @functools.wraps(func)
     def _func(*args, **kwargs):
-        ba = sig.bind(*args, **kwargs)
-        args, kwargs = ba.args, ba.kwargs
-        return func(*args, **kwargs)
+        call = signature.bind(*args, **kwargs)
+        return func(*call.args, **call.kwargs)
 
     return _func
 
 
 def _make_validator(typ: Type[Any], seq: bool, opt: bool):
     def validate(val):
-        if (
-            (opt and val is None)
-            or (not seq and isinstance(val, typ))
-            or (seq and isinstance(val, list) and all(isinstance(y, typ) for y in val))
-        ):
-            return
+        def fail():
+            expected = typ.__qualname__
+            if seq:
+                expected = f"List[{expected}]"
+            actual = type(val).__qualname__
 
-        expected = typ.__qualname__
-        if seq:
-            expected = f"List[{expected}]"
-        actual = type(val).__qualname__
+            raise TypeError(f"expected: {expected}, actual: {actual}")
 
-        raise TypeError(f"expected: {expected}, actual: {actual}")
+        if val is None:
+            if not opt:
+                fail()
+        elif seq:
+            if not isinstance(val, list):
+                fail()
+            if any(not isinstance(y, typ) for y in val):
+                fail()
+        else:
+            if not isinstance(val, typ):
+                fail()
 
     return staticmethod(validate)
 
 
+# pylint: disable=too-few-public-methods
 class _AsdlAdtBase(ABC):
     @abstractmethod
     def __init__(self):
         pass
 
     def update(self, **kwargs):
+        """
+        Useful wrapper for creating a copy of an instance of a generated class,
+        with only certain fields changed.
+        """
         return attrs.evolve(self, **kwargs)
 
 
@@ -72,7 +82,7 @@ class _BuildClasses(asdl.VisitorBase):
         memoize: Optional[Collection[str]] = None,
     ):
         super().__init__()
-        self.module = None
+        self.module: Optional[ModuleType] = None
         self._memoize = memoize or set()
         self._type_map = {
             **_BuildClasses._builtin_types,
@@ -108,19 +118,20 @@ class _BuildClasses(asdl.VisitorBase):
         return _BuildClasses._make_function("__init__", args, body, **context)
 
     @staticmethod
-    def _cached_new_fn(cls, fields):
+    def _cached_new_fn(supertype, fields):
         new_function = _BuildClasses._make_function(
             "__new__",
             ["cls"] + list(fields),
-            ["return super(typ, cls).__new__(cls)"],
-            typ=cls,
+            ["return super(supertype, cls).__new__(cls)"],
+            supertype=supertype,
         )
         return _normalize(cache(new_function))
 
     def _adt_class(self, *, name, base, fields: Union[List[str], OrderedDict]):
+        basename = self.module.__name__  # pylint: disable=no-member
         members = {
             **({} if isinstance(fields, list) else {"__init__": self._init_fn(fields)}),
-            "__qualname__": f"{self.module.__name__}.{name}",
+            "__qualname__": f"{basename}.{name}",
             "__annotations__": {f: None for f in fields},
         }
         cls = attrs.frozen(init=False)(type(name, (base,), members))
@@ -128,9 +139,19 @@ class _BuildClasses(asdl.VisitorBase):
             cls.__new__ = self._cached_new_fn(cls, fields)
         return cls
 
+    def _visit_fields(self, node):
+        validator_map = OrderedDict()
+        for field in node.fields:
+            self.visit(field, validator_map)
+        return validator_map
+
     # noinspection PyPep8Naming
     # pylint: disable=invalid-name
     def visitModule(self, mod: asdl.Module):
+        """
+        Create a new Python module and populate it with types corresponding to the
+        given ASDL definitions.
+        """
         self.module = ModuleType(mod.name)
 
         # Collect top-level names as stub/abstract classes
@@ -159,42 +180,48 @@ class _BuildClasses(asdl.VisitorBase):
     # noinspection PyPep8Naming
     # pylint: disable=invalid-name
     def visitType(self, typ: asdl.Type):
-        # Forward to Sum or Product
+        """
+        Forwards to either the sum or product handler
+        """
         self.visit(typ.value, self._base_types[typ.name])
 
     # noinspection PyPep8Naming
     # pylint: disable=invalid-name
     def visitProduct(self, prod: asdl.Product, base_type: Type[ABC]):
-        fields = OrderedDict()
-        for f in prod.fields:
-            self.visit(f, fields)
-
-        base_type.__init__ = self._init_fn(fields)
+        """
+        Creates a new data type for the current product type and adds it to the module.
+        """
+        base_type.__init__ = self._init_fn(self._visit_fields(prod))
         abc.update_abstractmethods(base_type)
 
     # noinspection PyPep8Naming
     # pylint: disable=invalid-name
     def visitSum(self, sum_node: asdl.Sum, base_type: Type[ABC]):
+        """
+        Adds all the constructors associated with this sum type to the module.
+        """
         for t in sum_node.types:
             self.visit(t, base_type)
 
     # noinspection PyPep8Naming
     # pylint: disable=invalid-name
     def visitConstructor(self, cons: asdl.Constructor, base_type: Type[ABC]):
-        fields = OrderedDict()
-        for f in cons.fields:
-            self.visit(f, fields)
-
+        """
+        Creates a new data type for the current constructor and adds it to the module.
+        """
         ctor_type = self._adt_class(
             name=cons.name,
             base=base_type,
-            fields=fields,
+            fields=self._visit_fields(cons),
         )
         setattr(self.module, cons.name, ctor_type)
 
     # noinspection PyPep8Naming
     # pylint: disable=invalid-name
     def visitField(self, field: asdl.Field, fields: OrderedDict):
+        """
+        Updates the "fields" dict with a mapping from field name to validator.
+        """
         fields[field.name] = _make_validator(
             self._type_map[field.type], field.seq, field.opt
         )
