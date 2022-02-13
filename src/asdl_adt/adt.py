@@ -46,7 +46,7 @@ def _make_validator(typ: Type[Any], seq: bool, opt: bool):
             if not isinstance(val, typ):
                 fail()
 
-    return staticmethod(validate)
+    return validate
 
 
 # pylint: disable=too-few-public-methods
