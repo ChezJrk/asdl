@@ -13,6 +13,19 @@ import asdl
 import attrs
 
 
+def _no_init(self):
+    pass
+
+
+def _update(self, **kwargs):
+    cls = self.__class__
+    for arg in cls.__slots__:
+        if arg not in kwargs:
+            kwargs[arg] = getattr(self, arg)
+
+    return cls(**kwargs)
+
+
 def _make_validator(typ: Type[Any], seq: bool, opt: bool):
     def validate(x):
         if (
@@ -53,7 +66,7 @@ class BuildClasses(asdl.VisitorBase):
         }
         self._base_types = {}
 
-    def _attach_init(self, base_type: Type[ABC], fields: OrderedDict[str, Any]):
+    def _make_init(self, fields: OrderedDict[str, Any]):
         """
         Make an __init__ method that can be injected into a class. Must use exec
         because dynamic Python functions cannot have named arguments.
@@ -83,10 +96,9 @@ class BuildClasses(asdl.VisitorBase):
             globals_dict,
         )
 
-        base_type.__init__ = globals_dict["__init__"]
-        abc.update_abstractmethods(base_type)
+        return globals_dict["__init__"]
 
-    def _maybe_memoize(self, typ: Type[ABC]):
+    def _maybe_memoize(self, typ: type):
         if typ.__name__ in self._memoize:
 
             @cache
@@ -95,35 +107,30 @@ class BuildClasses(asdl.VisitorBase):
 
             typ.__new__ = new_fn
 
-    def _make_base_type(self, typ: asdl.Type) -> Type[ABC]:
+    def _make_base_type(self, typ: asdl.Type) -> type:
         if isinstance(typ.value, asdl.Product):
             # The "base" type is the actual, final type for products, so apply
             # __slots__ now, to the "base" type, rather than going through a
             # dummy subclass.
-            slots = tuple(field.name for field in typ.value.fields)
+            fields = tuple(field.name for field in typ.value.fields)
         else:
-            slots = tuple()
+            fields = tuple()
 
-        @attrs.define(frozen=True, slots=False)
-        class BaseType(ABC):
-            __slots__ = slots
+        base_type = attrs.define(frozen=True)(
+            type(
+                typ.name,
+                (ABC,),
+                {
+                    "__init__": abstractmethod(_no_init),
+                    "__annotations__": {f: None for f in fields},
+                    "__qualname__": f"{self.module.__name__}.{typ.name}",
+                    "update": _update,
+                },
+            )
+        )
 
-            @abstractmethod
-            def __init__(self):
-                pass
-
-            def update(self, **kwargs):
-                cls = self.__class__
-                for arg in cls.__slots__:
-                    if arg not in kwargs:
-                        kwargs[arg] = getattr(self, arg)
-
-                return cls(**kwargs)
-
-        BaseType.__name__ = typ.name
-        BaseType.__qualname__ = f"{self.module.__name__}.{typ.name}"
-        self._maybe_memoize(BaseType)
-        return BaseType
+        self._maybe_memoize(base_type)
+        return base_type
 
     # noinspection PyPep8Naming
     def visitModule(self, mod: asdl.Module):
@@ -151,7 +158,8 @@ class BuildClasses(asdl.VisitorBase):
         for f in prod.fields:
             self.visit(f, fields)
 
-        self._attach_init(base_type, fields)
+        base_type.__init__ = self._make_init(fields)
+        abc.update_abstractmethods(base_type)
 
     # noinspection PyPep8Naming
     def visitSum(self, sum_node: asdl.Sum, base_type: Type[ABC]):
@@ -164,16 +172,20 @@ class BuildClasses(asdl.VisitorBase):
         for f in cons.fields:
             self.visit(f, fields)
 
-        @attrs.frozen(frozen=True, slots=False)
-        class CtorType(base_type):
-            __slots__ = tuple(fields)
-            pass
+        ctor_type = attrs.define(frozen=True)(
+            type(
+                cons.name,
+                (base_type,),
+                {
+                    "__init__": self._make_init(fields),
+                    "__qualname__": f"{self.module.__name__}.{cons.name}",
+                    "__annotations__": {f: None for f in fields},
+                },
+            )
+        )
 
-        CtorType.__name__ = cons.name
-        CtorType.__qualname__ = f"{self.module.__name__}.{cons.name}"
-        self._maybe_memoize(CtorType)
-        self._attach_init(CtorType, fields)
-        setattr(self.module, cons.name, CtorType)
+        self._maybe_memoize(ctor_type)
+        setattr(self.module, cons.name, ctor_type)
 
     # noinspection PyPep8Naming
     def visitField(self, field: asdl.Field, fields: OrderedDict):
