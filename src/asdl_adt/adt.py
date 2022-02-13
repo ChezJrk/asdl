@@ -7,7 +7,6 @@ import inspect
 import textwrap
 from abc import ABC, abstractmethod
 from collections import OrderedDict
-from functools import cache
 from types import ModuleType
 from typing import Type, Any, Mapping, Optional, Collection, List, Union
 
@@ -125,7 +124,7 @@ class _BuildClasses(asdl.VisitorBase):
             ["return super(supertype, cls).__new__(cls)"],
             supertype=supertype,
         )
-        return _normalize(cache(new_function))
+        return _normalize(functools.lru_cache(maxsize=None)(new_function))
 
     def _adt_class(self, *, name, base, fields: Union[List[str], OrderedDict]):
         basename = self.module.__name__  # pylint: disable=no-member
