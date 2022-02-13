@@ -132,20 +132,6 @@ class _BuildClasses(asdl.VisitorBase):
             cls.__new__ = self._make_cached_new(cls, fields)
         return cls
 
-    def _make_base_type(self, typ: asdl.Type) -> type:
-        # The "base" type is the actual, final type for products, but the init
-        # function cannot create validators until all the types have been created,
-        # so skip creating it for now (will be attached in visitProduct).
-        return self._make_class(
-            name=typ.name,
-            base=_AsdlAdtBase,
-            fields=(
-                [f.name for f in typ.value.fields]
-                if isinstance(typ.value, asdl.Product)
-                else []
-            ),
-        )
-
     # noinspection PyPep8Naming
     # pylint: disable=invalid-name
     def visitModule(self, mod: asdl.Module):
@@ -153,7 +139,19 @@ class _BuildClasses(asdl.VisitorBase):
 
         # Collect top-level names as stub/abstract classes
         for dfn in mod.dfns:
-            base_type = self._make_base_type(dfn)
+            # The "base" type is the actual, final type for products, but we cannot
+            # create validators for the __init__ function until all the types have
+            # been created, so we will wait until visitProduct is called later to
+            # attach it.
+            base_type = self._make_class(
+                name=dfn.name,
+                base=_AsdlAdtBase,
+                fields=(
+                    [f.name for f in dfn.value.fields]
+                    if isinstance(dfn.value, asdl.Product)
+                    else []
+                ),
+            )
             setattr(self.module, dfn.name, base_type)
             self._base_types[dfn.name] = base_type
             self._type_map[dfn.name] = base_type
