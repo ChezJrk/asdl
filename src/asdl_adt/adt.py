@@ -123,11 +123,10 @@ class _BuildClasses(asdl.VisitorBase):
         )
         return _normalize(cache(new_function))
 
-    def _make_class(self, name, base, fields, init=None, **kwargs):
+    def _make_class(self, name, base, fields, init=None):
         type_dict = {"__init__": init} if init else {}
         type_dict["__qualname__"] = f"{self.module.__name__}.{name}"
         type_dict["__annotations__"] = {f: None for f in fields}
-        type_dict.update(kwargs)
         cls = attrs.frozen(init=False)(type(name, (base,), type_dict))
         if cls.__name__ in self._memoize:
             cls.__new__ = self._make_cached_new(cls, fields)
