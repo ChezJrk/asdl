@@ -149,12 +149,7 @@ class _BuildClasses(asdl.VisitorBase):
         Create a new Python module and populate it with types corresponding to the
         given ASDL definitions.
         """
-        if mod.name in sys.modules:
-            self.module = sys.modules[mod.name]
-            return
-
         self.module = ModuleType(mod.name)
-        sys.modules[mod.name] = self.module
 
         # Collect top-level names as stub/abstract classes
         for dfn in mod.dfns:
@@ -308,11 +303,15 @@ def ADT(  # pylint: disable=invalid-name
         })
     """
     asdl_ast = asdl.ASDLParser().parse(asdl_str)
+    assert isinstance(asdl_ast, asdl.Module)
+
+    if mod := sys.modules.get(asdl_ast.name):
+        return mod
 
     builder = _BuildClasses(ext_types, memoize)
     builder.visit(asdl_ast)
-    mod = builder.module
 
+    mod = builder.module
     mod.__doc__ = (
         textwrap.dedent(
             """
@@ -322,4 +321,7 @@ def ADT(  # pylint: disable=invalid-name
         )
         + textwrap.dedent(asdl_str)
     )
+
+    sys.modules[asdl_ast.name] = mod
+
     return mod
