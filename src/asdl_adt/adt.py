@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import functools
 import inspect
+import sys
 import textwrap
 import typing
 from abc import ABC, abstractmethod
@@ -32,7 +33,7 @@ def _normalize(func):
 def _make_validator(point_valid, seq: bool, opt: bool):
     def validate(val):
         if val is None and opt:
-            return opt
+            return val
 
         if seq:
             if not isinstance(val, list):
@@ -302,11 +303,15 @@ def ADT(  # pylint: disable=invalid-name
         })
     """
     asdl_ast = asdl.ASDLParser().parse(asdl_str)
+    assert isinstance(asdl_ast, asdl.Module)
+
+    if mod := sys.modules.get(asdl_ast.name):
+        return mod
 
     builder = _BuildClasses(ext_types, memoize)
     builder.visit(asdl_ast)
-    mod = builder.module
 
+    mod = builder.module
     mod.__doc__ = (
         textwrap.dedent(
             """
@@ -316,4 +321,7 @@ def ADT(  # pylint: disable=invalid-name
         )
         + textwrap.dedent(asdl_str)
     )
+
+    sys.modules[asdl_ast.name] = mod
+
     return mod
