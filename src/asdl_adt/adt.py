@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import functools
 import inspect
+import sys
 import textwrap
 import typing
 from abc import ABC, abstractmethod
@@ -149,6 +150,7 @@ class _BuildClasses(asdl.VisitorBase):
         given ASDL definitions.
         """
         self.module = ModuleType(mod.name)
+        sys.modules[mod.name] = self.module
 
         # Collect top-level names as stub/abstract classes
         for dfn in mod.dfns:
