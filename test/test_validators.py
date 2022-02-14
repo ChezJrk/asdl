@@ -32,6 +32,7 @@ def test_optional_may_be_none():
     """
     test_adt = asdl_adt.ADT("module test_adt { foo = ( object? x ) }")
     assert isinstance(test_adt.foo(None), test_adt.foo)
+    assert test_adt.foo(None).x is None
 
 
 def test_subclass_validator():

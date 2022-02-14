@@ -32,7 +32,7 @@ def _normalize(func):
 def _make_validator(point_valid, seq: bool, opt: bool):
     def validate(val):
         if val is None and opt:
-            return opt
+            return val
 
         if seq:
             if not isinstance(val, list):
