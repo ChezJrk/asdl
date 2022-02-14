@@ -149,6 +149,10 @@ class _BuildClasses(asdl.VisitorBase):
         Create a new Python module and populate it with types corresponding to the
         given ASDL definitions.
         """
+        if mod.name in sys.modules:
+            self.module = sys.modules[mod.name]
+            return
+
         self.module = ModuleType(mod.name)
         sys.modules[mod.name] = self.module
 

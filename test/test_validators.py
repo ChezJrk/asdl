@@ -17,7 +17,7 @@ def test_object_is_not_none():
     """
     Test that "object"-typed fields may not be none
     """
-    test_adt = asdl_adt.ADT("module test_adt { foo = ( object x ) }")
+    test_adt = asdl_adt.ADT("module test_object_is_not_none { foo = ( object x ) }")
 
     assert isinstance(test_adt.foo(3), test_adt.foo)
     assert isinstance(test_adt.foo("bar"), test_adt.foo)
@@ -30,7 +30,7 @@ def test_optional_may_be_none():
     """
     Test that _optional_ "object"-typed fields _may_ be none
     """
-    test_adt = asdl_adt.ADT("module test_adt { foo = ( object? x ) }")
+    test_adt = asdl_adt.ADT("module test_optional_may_be_none { foo = ( object? x ) }")
     assert isinstance(test_adt.foo(None), test_adt.foo)
     assert test_adt.foo(None).x is None
 
@@ -48,7 +48,7 @@ def test_subclass_validator():
         pass
 
     test_adt = asdl_adt.ADT(
-        "module test_adt { foo = ( parent x ) }",
+        "module test_subclass_validator { foo = ( parent x ) }",
         ext_types={"parent": Type[Parent]},
     )
 
@@ -74,7 +74,8 @@ def test_adhoc_validator():
         raise ValidationError(Literal["foo", "bar"], str)
 
     test_adt = asdl_adt.ADT(
-        "module test_adt { foo = ( name x ) }", ext_types={"name": _valid_name}
+        "module test_adhoc_validator { foo = ( name x ) }",
+        ext_types={"name": _valid_name},
     )
 
     assert isinstance(test_adt.foo("foo"), test_adt.foo)
@@ -103,7 +104,7 @@ def test_string_subset():
             raise ValidationError(Identifier.valid_re.pattern, name)
 
     test_adt = asdl_adt.ADT(
-        "module test_adt { foo = ( iden x ) }",
+        "module test_string_subset { foo = ( iden x ) }",
         ext_types={"iden": instance_of(Identifier, convert=True)},
     )
 
@@ -139,7 +140,7 @@ def test_custom_list():
         raise ValidationError(Literal["foo", "bar"], str)
 
     test_adt = asdl_adt.ADT(
-        "module test_adt { foo = ( name* x ) }", ext_types={"name": _valid_name}
+        "module test_custom_list { foo = ( name* x ) }", ext_types={"name": _valid_name}
     )
 
     assert isinstance(test_adt.foo(["foo", "bar", "bar"]), test_adt.foo)
@@ -168,7 +169,7 @@ def test_enum_type():
         bar = "bar"
 
     test_adt = asdl_adt.ADT(
-        "module test_adt { foo = ( name* x ) }",
+        "module test_enum_type { foo = ( name* x ) }",
         ext_types={"name": instance_of(FooOrBar, convert=True)},
     )
 
@@ -183,4 +184,7 @@ def test_bad_validator():
     """
 
     with pytest.raises(ValueError, match="Unknown validator type"):
-        asdl_adt.ADT("module test_adt { foo = ( name* x ) }", ext_types={"name": 3})
+        asdl_adt.ADT(
+            "module test_bad_validator { foo = ( name* x ) }",
+            ext_types={"name": 3},
+        )

@@ -30,7 +30,7 @@ def simple_grammar():
     """
     return ADT(
         """
-        module UEq {
+        module simple_grammar {
             prod = ( int x, int y )
             sum = A( int x )
                 | B( float y )
@@ -48,7 +48,7 @@ def memo_grammar():
     """
     return ADT(
         """
-        module memo {
+        module memo_grammar {
             memo_prod = ( int x, int y )
 
             memo_sum = A()
