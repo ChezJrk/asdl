@@ -1,14 +1,14 @@
 # Project dependencies
 asdl==0.1.5
-attrs==21.4.0
+attrs==22.1.0
 
 # Development dependencies
-black==22.1.0
-build==0.7.0
-flake8==4.0.1
-pre-commit==2.17.0
-pylint==2.12.2
-pytest-cov==3.0.0
-pytest==7.0.1
-tox-gh-actions==2.9.1
-tox==3.24.5
+black==22.10.0
+build==0.9.0
+flake8==5.0.4
+pre-commit==2.20.0
+pylint==2.15.5
+pytest-cov==4.0.0
+pytest==7.2.0
+tox-gh-actions==2.10.0
+tox==3.27.0
