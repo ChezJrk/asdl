@@ -285,8 +285,7 @@ def ADT(  # pylint: disable=invalid-name
 
     Returns
     =================
-    module
-        A newly created module with classes for each ASDL type and constructor
+    A newly created module with classes for each ASDL type and constructor
 
     Example
     =================
