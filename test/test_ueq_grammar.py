@@ -46,7 +46,7 @@ def fixture_ueq_grammar():
                  | Scale( int coeff, expr e )
         }
         """,
-        {"sym": Sym},
+        ext_types={"sym": Sym},
     )
 
 
