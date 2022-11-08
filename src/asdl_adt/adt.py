@@ -76,10 +76,13 @@ class _BuildClasses(asdl.VisitorBase):
     def __init__(
         self,
         ext_types: Optional[Mapping[str, type]] = None,
+        mixin_types: Optional[Mapping[str, type]] = None,
         memoize: Optional[Collection[str]] = None,
     ):
         super().__init__()
         self.module: Optional[ModuleType] = None
+
+        self._mixin_types = mixin_types or {}
         self._memoize = memoize or set()
         self._type_map = {
             **_BuildClasses._builtin_types,
@@ -131,7 +134,13 @@ class _BuildClasses(asdl.VisitorBase):
             "__qualname__": f"{basename}.{name}",
             "__annotations__": {f: None for f in fields},
         }
-        cls = attrs.frozen(init=False)(type(name, (base,), members))
+
+        if mixin := self._mixin_types.get(name):
+            base_types = (base, mixin)
+        else:
+            base_types = (base,)
+
+        cls = attrs.frozen(init=False)(type(name, base_types, members))
         if cls.__name__ in self._memoize:
             cls.__new__ = self._cached_new_fn(cls, fields)
         return cls
@@ -243,10 +252,13 @@ class _BuildClasses(asdl.VisitorBase):
 
 def ADT(  # pylint: disable=invalid-name
     asdl_str: str,
+    *,
     ext_types: Optional[Mapping[str, Union[type, Callable]]] = None,
     memoize: Optional[Collection[str]] = None,
+    mixin_types: Optional[Mapping[str, type]] = None,
 ):
-    """Function that converts an ASDL grammar into a Python Module.
+    """
+    Function that converts an ASDL grammar into a Python Module.
 
     The returned module will contain one class for every ASDL type
     declared in the input grammar, and one (sub-)class for every
@@ -271,7 +283,7 @@ def ADT(  # pylint: disable=invalid-name
     =================
     asdl_str : str
         The ASDL definition string
-    ext_types : Optional[Mapping[str, type]]
+    ext_types : Optional[Mapping[str, Union[type, Callable]]]
         A mapping of custom type names to Python types. Used to create validators for
         the __init__ method of generated classes. Several built-in types are implied,
         with the following corresponding Python types:
@@ -282,6 +294,10 @@ def ADT(  # pylint: disable=invalid-name
         *   'string' - str
     memoize : Optional[Collection[str]]
         collection of constructor names to memoize, optional
+    mixin_types : Optional[Mapping[str, type]]
+        A mapping of generated type names (matching the ASDL productions) to
+        mixin classes from which to inherit. This is useful for injecting custom
+        methods into the generated classes.
 
     Returns
     =================
@@ -307,7 +323,7 @@ def ADT(  # pylint: disable=invalid-name
     if mod := sys.modules.get(asdl_ast.name):
         return mod
 
-    builder = _BuildClasses(ext_types, memoize)
+    builder = _BuildClasses(ext_types, mixin_types, memoize)
     builder.visit(asdl_ast)
 
     mod = builder.module
