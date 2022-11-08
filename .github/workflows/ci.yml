@@ -54,7 +54,7 @@ jobs:
 
       - uses: psf/black@stable
       - uses: py-actions/flake8@v2
-      - run: pylint src/**/*.py test/*.py *.py
+      - run: pylint src/**/*.py test/*.py
         env:
           PYTHONPATH: ${{ github.workspace }}/src
   test-package:
