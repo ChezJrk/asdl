@@ -3,7 +3,7 @@ asdl==0.1.5
 attrs==22.1.0
 
 # Development dependencies
-black==22.10.0
+black==24.3.0
 build==0.9.0
 flake8==5.0.4
 pre-commit==2.20.0
